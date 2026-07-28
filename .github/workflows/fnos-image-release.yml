@@ -1,0 +1,160 @@
+name: fnOS Candidate Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_version:
+        description: fnOS candidate version to publish
+        required: true
+        default: 1.4.0-fnos.1
+        type: string
+
+concurrency:
+  group: fnos-image-release-${{ github.repository }}-${{ inputs.candidate_version }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  candidate:
+    name: Verify candidate metadata
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.candidate.outputs.version }}
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: candidate
+        shell: bash
+        env:
+          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+        run: |
+          test "$CANDIDATE_VERSION" = "1.4.0-fnos.1" || {
+            echo "::error::This workflow only publishes the reviewed 1.4.0-fnos.1 candidate."
+            exit 1
+          }
+          echo "version=$CANDIDATE_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Require unused candidate and commit tags
+        shell: bash
+        env:
+          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          COMMIT_TAG: sha-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for image in ghcr.io/luoshuai990529/sag-api ghcr.io/luoshuai990529/sag-web; do
+            for tag in "$CANDIDATE_VERSION" "$COMMIT_TAG"; do
+              if docker manifest inspect "$image:$tag" >/dev/null 2>&1; then
+                echo "::error::Refusing to replace existing image tag $image:$tag."
+                exit 1
+              fi
+            done
+          done
+
+  build:
+    name: Build ${{ matrix.name }} image
+    needs: candidate
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: API
+            context: ./apps/api
+            image: ghcr.io/luoshuai990529/sag-api
+            build_args: ""
+          - name: Web
+            context: ./apps/web
+            image: ghcr.io/luoshuai990529/sag-web
+            build_args: NEXT_PUBLIC_API_BASE=/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish linux/amd64 and linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: ${{ matrix.build_args }}
+          tags: |
+            ${{ matrix.image }}:${{ needs.candidate.outputs.version }}
+            ${{ matrix.image }}:sha-${{ github.sha }}
+
+  smoke-and-inspect:
+    name: amd64 smoke tests and manifest inspection
+    needs: [candidate, build]
+    runs-on: ubuntu-24.04
+    env:
+      CANDIDATE_VERSION: ${{ needs.candidate.outputs.version }}
+      COMMIT_TAG: sha-${{ github.sha }}
+      API_IMAGE: ghcr.io/luoshuai990529/sag-api
+      WEB_IMAGE: ghcr.io/luoshuai990529/sag-web
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test amd64 API readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'docker rm -f sag-api-smoke >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name sag-api-smoke --platform linux/amd64 \
+            --publish 18000:8000 \
+            --env SAG_ENVIRONMENT=prod \
+            --env SAG_DEBUG=false \
+            --env SAG_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+            "$API_IMAGE:$CANDIDATE_VERSION"
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:18000/api/v1/system/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs sag-api-smoke
+          exit 1
+      - name: Smoke test amd64 Web root
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'docker rm -f sag-web-smoke >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name sag-web-smoke --platform linux/amd64 \
+            --publish 13000:3000 \
+            "$WEB_IMAGE:$CANDIDATE_VERSION"
+          for attempt in {1..20}; do
+            if curl --fail --silent --show-error http://127.0.0.1:13000/ >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs sag-web-smoke
+          exit 1
+      - name: Inspect candidate and commit-tag manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_manifest() {
+            local image="$1"
+            local tag="$2"
+            docker buildx imagetools inspect --raw "$image:$tag" | jq -e '
+              .manifests
+              | map(.platform.os + "/" + .platform.architecture)
+              | (index("linux/amd64") != null and index("linux/arm64") != null)
+            ' >/dev/null
+          }
+          for image in "$API_IMAGE" "$WEB_IMAGE"; do
+            verify_manifest "$image" "$CANDIDATE_VERSION"
+            verify_manifest "$image" "$COMMIT_TAG"
+          done
