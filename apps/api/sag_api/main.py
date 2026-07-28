@@ -38,9 +38,11 @@ _INSECURE_SECRETS = {
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging("DEBUG" if settings.debug else "INFO")
-    if settings.environment == "prod" and settings.secret_key in _INSECURE_SECRETS:
+    if settings.environment == "prod" and (
+        settings.secret_key in _INSECURE_SECRETS or len(settings.secret_key.encode("utf-8")) < 32
+    ):
         raise RuntimeError(
-            "生产环境禁止使用默认 SAG_SECRET_KEY。请设置强随机值（≥32 字节），例如：openssl rand -hex 32"
+            "生产环境的 SAG_SECRET_KEY 必须是强随机值（≥32 字节），例如：openssl rand -hex 32"
         )
     os.makedirs(settings.data_dir, exist_ok=True)
     os.makedirs(settings.upload_dir, exist_ok=True)

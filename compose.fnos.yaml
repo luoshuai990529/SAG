@@ -1,3 +1,4 @@
+# Start with: docker compose --env-file .env.fnos -f compose.fnos.yaml up -d --build
 name: sag
 
 services:
@@ -10,7 +11,7 @@ services:
     environment:
       SAG_ENVIRONMENT: prod
       SAG_DEBUG: "false"
-      SAG_SECRET_KEY: "${SAG_SECRET_KEY:?Set SAG_SECRET_KEY to a strong random value (for example: openssl rand -hex 32)}"
+      SAG_SECRET_KEY: "${SAG_SECRET_KEY:?Set SAG_SECRET_KEY in .env.fnos to a strong random value (for example: openssl rand -hex 32)}"
       SAG_CORS_ORIGINS: ""
       SAG_ALLOW_REGISTRATION: "false"
       SAG_DATABASE_URL: sqlite+aiosqlite:////data/sag.db
