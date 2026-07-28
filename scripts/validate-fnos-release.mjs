@@ -7,8 +7,8 @@ import process from "node:process";
 const defaultCompose = "packages/fnos/sag/docker-compose.yml";
 const composePath = path.resolve(process.cwd(), process.argv[2] || defaultCompose);
 const immutableDigest = /@sha256:[a-f0-9]{64}$/i;
-const strongSecret = /^[a-f0-9]{64}$/i;
 const requiredSecretReference = /^\$\{SAG_SECRET_KEY:?\?[^}]*\}$/;
+const fnosSecretEnvFile = "${TRIM_PKGETC}/sag.env";
 
 function fail(messages) {
   for (const message of messages) console.error(`release-compose: ${message}`);
@@ -18,7 +18,7 @@ function fail(messages) {
 function loadCompose(file) {
   const result = spawnSync(
     "docker",
-    ["compose", "-f", file, "config", "--no-interpolate", "--format", "json"],
+    ["compose", "-f", file, "config", "--no-interpolate", "--no-path-resolution", "--format", "json"],
     { encoding: "utf8" },
   );
   if (result.error) {
@@ -50,10 +50,21 @@ function validateImage(name, service, errors) {
   }
 }
 
+function hasFnosSecretEnvFile(api) {
+  return Array.isArray(api.env_file) && api.env_file.some((entry) => (
+    entry === fnosSecretEnvFile
+    || (entry && typeof entry === "object" && entry.path === fnosSecretEnvFile)
+  ));
+}
+
 function validateApiSecret(api, errors) {
   const secret = api.environment?.SAG_SECRET_KEY;
-  if (typeof secret !== "string" || (!strongSecret.test(secret) && !requiredSecretReference.test(secret))) {
-    errors.push("api must use a strong SAG_SECRET_KEY (64 hex characters or a required SAG_SECRET_KEY reference)");
+  if (typeof secret === "string" && requiredSecretReference.test(secret)) return;
+  if (secret === undefined && hasFnosSecretEnvFile(api)) return;
+  if (typeof secret === "string") {
+    errors.push("api must use a required SAG_SECRET_KEY reference, not a literal secret");
+  } else {
+    errors.push("api must use a required SAG_SECRET_KEY reference or ${TRIM_PKGETC}/sag.env");
   }
 }
 

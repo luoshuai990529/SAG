@@ -9,8 +9,17 @@ import { fileURLToPath } from "node:url";
 const validator = fileURLToPath(new URL("../validate-fnos-release.mjs", import.meta.url));
 const digest = `sha256:${"a".repeat(64)}`;
 
-function validCompose({ api = "", web = "", gateway = "" } = {}) {
-  return `name: sag\nservices:\n  api:\n    image: ghcr.io/luoshuai990529/sag-api@${digest}\n    environment:\n      SAG_SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n${api}  web:\n    image: ghcr.io/luoshuai990529/sag-web@${digest}\n${web}  gateway:\n    image: nginx@${digest}\n${gateway}`;
+function validCompose({
+  api = "",
+  apiSecret = "${SAG_SECRET_KEY:?set in the runtime environment}",
+  apiEnvFile = "",
+  web = "",
+  gateway = "",
+} = {}) {
+  const secretEnvironment = apiSecret === null
+    ? ""
+    : `    environment:\n      SAG_SECRET_KEY: ${apiSecret}\n`;
+  return `name: sag\nservices:\n  api:\n    image: ghcr.io/luoshuai990529/sag-api@${digest}\n${apiEnvFile}${secretEnvironment}${api}  web:\n    image: ghcr.io/luoshuai990529/sag-web@${digest}\n${web}  gateway:\n    image: nginx@${digest}\n${gateway}`;
 }
 
 async function fixture(t, contents) {
@@ -27,8 +36,19 @@ function validate(compose) {
   return result;
 }
 
-test("accepts a digest-pinned release Compose with a strong API secret", async (t) => {
+test("accepts a digest-pinned release Compose with a required runtime API secret", async (t) => {
   const compose = await fixture(t, validCompose());
+  const result = validate(compose);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /release Compose validation passed/);
+});
+
+test("accepts an fnOS package env_file as the API secret source", async (t) => {
+  const compose = await fixture(t, validCompose({
+    apiSecret: null,
+    apiEnvFile: "    env_file:\n      - ${TRIM_PKGETC}/sag.env\n",
+  }));
   const result = validate(compose);
 
   assert.equal(result.status, 0, result.stderr);
@@ -52,11 +72,21 @@ test("rejects Compose build instructions", async (t) => {
 });
 
 test("rejects a weak development secret", async (t) => {
-  const compose = await fixture(t, validCompose().replace(/0123456789abcdef/g, "dev-insecure-secret-change-me-in-production-0123456789"));
+  const compose = await fixture(t, validCompose({
+    apiSecret: "dev-insecure-secret-change-me-in-production-0123456789",
+  }));
   const result = validate(compose);
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /strong SAG_SECRET_KEY/);
+  assert.match(result.stderr, /required SAG_SECRET_KEY/);
+});
+
+test("rejects a predictable 64-zero literal API secret", async (t) => {
+  const compose = await fixture(t, validCompose({ apiSecret: `"${"0".repeat(64)}"` }));
+  const result = validate(compose);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /required SAG_SECRET_KEY/);
 });
 
 test("rejects an API host port", async (t) => {
