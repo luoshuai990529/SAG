@@ -51,10 +51,12 @@ function validateImage(name, service, errors) {
 }
 
 function hasFnosSecretEnvFile(api) {
-  return Array.isArray(api.env_file) && api.env_file.some((entry) => (
-    entry === fnosSecretEnvFile
-    || (entry && typeof entry === "object" && entry.path === fnosSecretEnvFile)
-  ));
+  if (!Array.isArray(api.env_file) || api.env_file.length !== 1) return false;
+  const [entry] = api.env_file;
+  return entry
+    && typeof entry === "object"
+    && entry.path === fnosSecretEnvFile
+    && entry.required === true;
 }
 
 function validateApiSecret(api, errors) {
@@ -64,7 +66,7 @@ function validateApiSecret(api, errors) {
   if (typeof secret === "string") {
     errors.push("api must use a required SAG_SECRET_KEY reference, not a literal secret");
   } else {
-    errors.push("api must use a required SAG_SECRET_KEY reference or ${TRIM_PKGETC}/sag.env");
+    errors.push("api must use a required SAG_SECRET_KEY reference or exactly one required env_file at ${TRIM_PKGETC}/sag.env");
   }
 }
 

@@ -55,6 +55,28 @@ test("accepts an fnOS package env_file as the API secret source", async (t) => {
   assert.match(result.stdout, /release Compose validation passed/);
 });
 
+test("rejects an fnOS secret env_file followed by an override env_file", async (t) => {
+  const compose = await fixture(t, validCompose({
+    apiSecret: null,
+    apiEnvFile: "    env_file:\n      - ${TRIM_PKGETC}/sag.env\n      - ./override.env\n",
+  }));
+  const result = validate(compose);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /exactly one required env_file/);
+});
+
+test("rejects an optional fnOS secret env_file", async (t) => {
+  const compose = await fixture(t, validCompose({
+    apiSecret: null,
+    apiEnvFile: "    env_file:\n      - path: ${TRIM_PKGETC}/sag.env\n        required: false\n",
+  }));
+  const result = validate(compose);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /exactly one required env_file/);
+});
+
 test("rejects a latest image tag", async (t) => {
   const compose = await fixture(t, validCompose().replace(`ghcr.io/luoshuai990529/sag-api@${digest}`, "ghcr.io/luoshuai990529/sag-api:latest"));
   const result = validate(compose);
