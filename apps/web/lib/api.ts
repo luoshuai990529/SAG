@@ -37,6 +37,7 @@ import type {
 /** 浏览器通过局域网 IP 打开前端时，自动将 API 指向同主机 8000 端口。 */
 function resolveApiBase(): string {
   const configured = process.env.NEXT_PUBLIC_API_BASE;
+  if (configured === "/") return "";
   if (typeof window !== "undefined") {
     const { protocol, hostname } = window.location;
     const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1";
