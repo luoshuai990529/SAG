@@ -86,10 +86,67 @@ function run(command, args, options = {}) {
   return result;
 }
 
-function verifyPublishedImages(options) {
+async function packageVersion() {
+  const manifest = await readFile(path.join(sourcePackage, "manifest"), "utf8");
+  const match = /^version\s*=\s*(\S+)\s*$/m.exec(manifest);
+  if (!match) fail("package manifest must define a version");
+  return match[1];
+}
+
+function imageDigest(reference) {
+  return reference.slice(reference.lastIndexOf("@") + 1);
+}
+
+function inspectRawImage(name, reference) {
+  const result = run("docker", ["buildx", "imagetools", "inspect", "--raw", reference]);
+  let image;
+  try {
+    image = JSON.parse(result.stdout);
+  } catch (error) {
+    fail(`${name} image inspection did not return JSON: ${error.message}`);
+  }
+  const indexMediaTypes = new Set([
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+  ]);
+  if (!indexMediaTypes.has(image.mediaType) || !Array.isArray(image.manifests)) {
+    fail(`${name} image must resolve to a multi-platform image index`);
+  }
+  return image;
+}
+
+function requirePlatforms(name, image, requiredPlatforms) {
+  const platforms = new Set(image.manifests.map(({ platform }) => (
+    platform && typeof platform.os === "string" && typeof platform.architecture === "string"
+      ? `${platform.os}/${platform.architecture}`
+      : ""
+  )));
+  for (const platform of requiredPlatforms) {
+    if (!platforms.has(platform)) fail(`${name} image index is missing ${platform}`);
+  }
+}
+
+function candidateTagDigest(name, reference, version) {
+  const repository = reference.slice(0, reference.lastIndexOf("@"));
+  const result = run("docker", [
+    "buildx", "imagetools", "inspect", "--format", "{{.Manifest.Digest}}", `${repository}:${version}`,
+  ]);
+  return result.stdout.trim();
+}
+
+async function verifyPublishedImages(options) {
   if (options.structuralTest) return;
+  const version = await packageVersion();
   for (const name of ["api", "web", "nginx"]) {
-    run("docker", ["buildx", "imagetools", "inspect", options[name]]);
+    const image = inspectRawImage(name, options[name]);
+    requirePlatforms(name, image, name === "nginx" ? ["linux/amd64"] : ["linux/amd64", "linux/arm64"]);
+    if (name === "api" || name === "web") {
+      const expectedDigest = imageDigest(options[name]);
+      const boundDigest = candidateTagDigest(name, options[name], version);
+      if (boundDigest !== expectedDigest) {
+        fail(`${name} candidate tag ${version} does not resolve to the supplied digest`);
+      }
+    }
   }
 }
 
@@ -110,7 +167,7 @@ async function renderPackage(renderRoot, options) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   validateInputs(options);
-  verifyPublishedImages(options);
+  await verifyPublishedImages(options);
 
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-render-"));
   const renderedPackage = path.join(temporaryRoot, "sag");

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       candidate_version:
-        description: fnOS candidate version to publish
+        description: Reviewed fnOS candidate version to publish
         required: true
         default: 1.4.0-fnos.1
         type: string
@@ -18,31 +18,49 @@ permissions:
   packages: write
 
 jobs:
+  quality:
+    if: github.repository == 'luoshuai990529/SAG' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+
   candidate:
-    name: Verify candidate metadata
+    name: Verify reviewed candidate and reserve final tags
+    needs: quality
+    if: github.repository == 'luoshuai990529/SAG' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     outputs:
-      version: ${{ steps.candidate.outputs.version }}
+      version: ${{ steps.metadata.outputs.version }}
+      staging_tag: ${{ steps.metadata.outputs.staging_tag }}
     steps:
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: candidate
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - id: metadata
+        name: Verify repository, ref, manifest, and candidate input
         shell: bash
         env:
           CANDIDATE_VERSION: ${{ inputs.candidate_version }}
         run: |
-          test "$CANDIDATE_VERSION" = "1.4.0-fnos.1" || {
-            echo "::error::This workflow only publishes the reviewed 1.4.0-fnos.1 candidate."
-            exit 1
-          }
-          echo "version=$CANDIDATE_VERSION" >> "$GITHUB_OUTPUT"
-      - name: Require unused candidate and commit tags
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "luoshuai990529/SAG"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
+          appname=$(awk -F= '/^appname[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2}' packages/fnos/sag/manifest)
+          version=$(awk -F= '/^version[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2}' packages/fnos/sag/manifest)
+          test "$appname" = "sag"
+          test "$version" = "1.4.0-fnos.1"
+          test "$CANDIDATE_VERSION" = "$version"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'staging_tag=staging-fnos-%s-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Preserve immutable candidate and commit tags
         shell: bash
         env:
-          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          CANDIDATE_VERSION: ${{ steps.metadata.outputs.version }}
           COMMIT_TAG: sha-${{ github.sha }}
         run: |
           set -euo pipefail
@@ -55,9 +73,61 @@ jobs:
             done
           done
 
-  build:
-    name: Build ${{ matrix.name }} image
+  local-amd64-smoke:
+    name: Build and smoke local linux/amd64 images
     needs: candidate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
+      - name: Build local API image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.17.0
+        with:
+          context: ./apps/api
+          load: true
+          platforms: linux/amd64
+          tags: sag-api-smoke:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.candidate.outputs.version }}
+      - name: Build local Web image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.17.0
+        with:
+          context: ./apps/web
+          load: true
+          platforms: linux/amd64
+          build-args: NEXT_PUBLIC_API_BASE=/
+          tags: sag-web-smoke:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.candidate.outputs.version }}
+      - name: Smoke API readiness and Web root
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'docker rm -f sag-api-smoke sag-web-smoke >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name sag-api-smoke --publish 18000:8000 \
+            --env SAG_ENVIRONMENT=prod \
+            --env SAG_DEBUG=false \
+            --env SAG_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+            sag-api-smoke:"$GITHUB_SHA"
+          docker run --detach --name sag-web-smoke --publish 13000:3000 sag-web-smoke:"$GITHUB_SHA"
+          for attempt in {1..30}; do
+            curl --fail --silent --show-error http://127.0.0.1:18000/api/v1/system/ready >/dev/null && break
+            sleep 2
+            test "$attempt" -lt 30 || { docker logs sag-api-smoke; exit 1; }
+          done
+          for attempt in {1..20}; do
+            curl --fail --silent --show-error http://127.0.0.1:13000/ >/dev/null && break
+            sleep 2
+            test "$attempt" -lt 20 || { docker logs sag-web-smoke; exit 1; }
+          done
+
+  staging:
+    name: Publish multi-platform staging images
+    needs: [candidate, local-amd64-smoke]
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -73,88 +143,77 @@ jobs:
             build_args: NEXT_PUBLIC_API_BASE=/
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+        with:
+          ref: ${{ github.sha }}
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.6.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and publish linux/amd64 and linux/arm64
-        uses: docker/build-push-action@v6
+      - name: Build and push an isolated staging index
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.17.0
         with:
           context: ${{ matrix.context }}
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: ${{ matrix.build_args }}
-          tags: |
-            ${{ matrix.image }}:${{ needs.candidate.outputs.version }}
-            ${{ matrix.image }}:sha-${{ github.sha }}
+          tags: ${{ matrix.image }}:${{ needs.candidate.outputs.staging_tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.candidate.outputs.version }}
 
-  smoke-and-inspect:
-    name: amd64 smoke tests and manifest inspection
-    needs: [candidate, build]
+  inspect-and-promote:
+    name: Inspect staging indexes and promote verified digests
+    needs: [candidate, staging]
     runs-on: ubuntu-24.04
     env:
       CANDIDATE_VERSION: ${{ needs.candidate.outputs.version }}
+      STAGING_TAG: ${{ needs.candidate.outputs.staging_tag }}
       COMMIT_TAG: sha-${{ github.sha }}
-      API_IMAGE: ghcr.io/luoshuai990529/sag-api
-      WEB_IMAGE: ghcr.io/luoshuai990529/sag-web
     steps:
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Smoke test amd64 API readiness
+      - name: Verify staged indexes and amd64 runtime metadata
         shell: bash
         run: |
           set -euo pipefail
-          trap 'docker rm -f sag-api-smoke >/dev/null 2>&1 || true' EXIT
-          docker run --detach --name sag-api-smoke --platform linux/amd64 \
-            --publish 18000:8000 \
-            --env SAG_ENVIRONMENT=prod \
-            --env SAG_DEBUG=false \
-            --env SAG_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-            "$API_IMAGE:$CANDIDATE_VERSION"
-          for attempt in {1..30}; do
-            if curl --fail --silent --show-error http://127.0.0.1:18000/api/v1/system/ready >/dev/null; then
-              exit 0
-            fi
-            sleep 2
-          done
-          docker logs sag-api-smoke
-          exit 1
-      - name: Smoke test amd64 Web root
-        shell: bash
-        run: |
-          set -euo pipefail
-          trap 'docker rm -f sag-web-smoke >/dev/null 2>&1 || true' EXIT
-          docker run --detach --name sag-web-smoke --platform linux/amd64 \
-            --publish 13000:3000 \
-            "$WEB_IMAGE:$CANDIDATE_VERSION"
-          for attempt in {1..20}; do
-            if curl --fail --silent --show-error http://127.0.0.1:13000/ >/dev/null; then
-              exit 0
-            fi
-            sleep 2
-          done
-          docker logs sag-web-smoke
-          exit 1
-      - name: Inspect candidate and commit-tag manifests
-        shell: bash
-        run: |
-          set -euo pipefail
-          verify_manifest() {
+          verify_staged_image() {
             local image="$1"
-            local tag="$2"
-            docker buildx imagetools inspect --raw "$image:$tag" | jq -e '
-              .manifests
-              | map(.platform.os + "/" + .platform.architecture)
-              | (index("linux/amd64") != null and index("linux/arm64") != null)
+            docker buildx imagetools inspect --raw "$image:$STAGING_TAG" | jq -e '
+              .mediaType as $type
+              | ($type == "application/vnd.oci.image.index.v1+json" or $type == "application/vnd.docker.distribution.manifest.list.v2+json")
+              and ([.manifests[].platform | select(.os == "linux" and .architecture == "amd64")] | length > 0)
+              and ([.manifests[].platform | select(.os == "linux" and .architecture == "arm64")] | length > 0)
             ' >/dev/null
+            docker pull --platform linux/amd64 "$image:$STAGING_TAG"
+            test "$(docker image inspect "$image:$STAGING_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$GITHUB_SHA"
+            test "$(docker image inspect "$image:$STAGING_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')" = "$CANDIDATE_VERSION"
           }
-          for image in "$API_IMAGE" "$WEB_IMAGE"; do
-            verify_manifest "$image" "$CANDIDATE_VERSION"
-            verify_manifest "$image" "$COMMIT_TAG"
-          done
+          verify_staged_image ghcr.io/luoshuai990529/sag-api
+          verify_staged_image ghcr.io/luoshuai990529/sag-web
+      - name: Promote verified index digests without rebuilding
+        shell: bash
+        run: |
+          set -euo pipefail
+          promote() {
+            local image="$1"
+            local digest
+            digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$image:$STAGING_TAG")"
+            test "$digest" != ""
+            docker buildx imagetools create \
+              --tag "$image:$CANDIDATE_VERSION" \
+              --tag "$image:$COMMIT_TAG" \
+              "$image@$digest"
+          }
+          promote ghcr.io/luoshuai990529/sag-api
+          promote ghcr.io/luoshuai990529/sag-web
+      - name: Record staging retention
+        shell: bash
+        run: |
+          echo "::notice::Staging tags $STAGING_TAG are retained. Deleting a registry manifest by digest could remove the promoted immutable content; clean staging tags only with a registry operation that targets the tag alone."

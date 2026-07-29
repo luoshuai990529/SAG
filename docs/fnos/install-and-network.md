@@ -96,7 +96,8 @@ $rows | Sort-Object DisplayName | Format-List
 
 ## 2. 发布公开 GHCR 镜像
 
-在 GitHub 默认分支可见 `.github/workflows/fnos-image-release.yml` 后，手动运行 **fnOS Candidate Images**，输入：
+仅在受权的 `luoshuai990529/SAG` 默认分支 `main` 上手动运行
+**fnOS Candidate Images**，输入：
 
 ```text
 1.4.0-fnos.1
@@ -109,7 +110,27 @@ ghcr.io/luoshuai990529/sag-api
 ghcr.io/luoshuai990529/sag-web
 ```
 
-每个镜像包含 `linux/amd64` 和 `linux/arm64`，并带候选版本和 commit SHA 标签。工作流对 amd64 执行 API/Web 运行时冒烟，对 arm64 执行构建和清单检查。候选包仍只声明 x86；arm64 镜像构建成功不等于 ARM64 fnOS 已认证。
+工作流先从已 checkout 的 `GITHUB_SHA` 校验 `packages/fnos/sag/manifest` 的
+`appname=sag` 与候选版本，并完成可复用 CI 质量门禁。随后它只在 runner
+本地构建并加载 amd64 API/Web，实际轮询 API ready 与 Web 根路径；这一步不写
+GHCR。
+
+本地冒烟成功后，工作流才把 amd64+arm64 的 manifest index 推送到本次运行唯一
+的 `staging-fnos-<run>-<attempt>-<sha>` 标签。它检查 staging 原始 index、拉取
+amd64 staging 镜像并验证 OCI revision/version 元数据，最后以服务器端
+`imagetools create` 把已验证的 index digest 提升为候选版本和 `sha-<commit>`
+标签。候选和 commit 标签在开始时必须不存在，因此不会被重写。候选包仍只声明
+x86；arm64 镜像构建成功不等于 ARM64 fnOS 已认证。
+
+预提升失败可以重新运行：新的 run attempt 使用新的 staging 标签，最终标签仍未
+写入。staging 标签不会由工作流按 digest 删除，因为删除 digest 可能误删已提升
+的不可变内容；仅可使用能够精确删除单个 tag 的受控 GHCR 操作清理，并保留审计
+记录。
+
+可复用 CI 会运行发布 Compose、包行为、生命周期和文档测试，但不会下载未经
+校验的 Linux `fnpack` 可执行文件。`fnpack build` 结构测试只在预先验证了官方
+二进制及校验值的 runner 上设置 `SAG_FNPACK_TESTS=1` 后执行；不要为了让 CI
+变绿而跳过校验或下载未记录校验和的文件。
 
 发布后把两个 Packages 设为 Public，并记录 manifest-list digest。fnOS 安装期间不会配置 registry 凭据，因此必须能匿名拉取 GHCR 和 Docker Hub：
 
@@ -152,10 +173,12 @@ node scripts/build-fnos-package.mjs \
 构建脚本会：
 
 1. 拒绝标签、错误仓库和非 digest 引用；
-2. 通过 `docker buildx imagetools inspect` 确认引用存在；
-3. 将 digest 渲染进临时包目录；
-4. 运行发布 Compose 校验和 `fnpack build`；
-5. 只复制最终 `.fpk` 到指定输出。
+2. 解析 `docker buildx imagetools inspect --raw` JSON，要求 API/Web index 同时
+   包含 `linux/amd64` 与 `linux/arm64`，Nginx index 包含 `linux/amd64`；
+3. 确认 API/Web 提供的 digest 正是对应候选版本 tag 当前绑定的 digest；
+4. 将 digest 渲染进临时包目录；
+5. 运行发布 Compose 校验和 `fnpack build`；
+6. 只复制最终 `.fpk` 到指定输出。
 
 校验文件在输出目录内用 `.fpk` 的 basename 生成并立即验证；分发时必须把 `.fpk` 与 `.sha256` 一起移动，接收方进入两者所在目录后执行同一条 `shasum -a 256 -c`。
 

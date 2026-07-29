@@ -9,6 +9,10 @@
 - API `8000` 和 Web `3000` 只在 Compose 网络内可见；用户入口为 `http://<fnOS 可达地址>:3080`。
 - Mac 已完成 Docker、Buildx、Compose、`fnpack` 和 `hello-world` 本地准备。`appcenter-cli` 是 fnOS 设备上的工具，不是 Mac 必装工具。
 - 源码、生命周期测试和临时结构包已经具备；公开 GHCR 镜像、正式 `.fpk`、Windows `3080` NAT、防火墙和 fnOS UI 生命周期验收仍是外部门禁。
+- 候选发布先在 CI runner 本地 smoke amd64，再写入每次运行唯一的 GHCR staging tag；
+  只有原始多架构 index 与 staging 运行时 OCI 元数据都通过检查后，才按 digest
+  提升为不可重写的候选和 commit 标签。staging tag 的安全清理需要 tag 级 GHCR
+  操作，不能按 digest 删除。
 - 正式发布前还必须补齐 x86-64 实机、ARM64 fnOS 实机和应用中心上架验证。本候选版不声明 ARM64 fnOS 支持。
 
 ## 文档导航
