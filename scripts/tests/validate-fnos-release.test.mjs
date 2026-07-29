@@ -44,6 +44,14 @@ function validate(compose) {
   return result;
 }
 
+test("requires an explicit rendered Compose path", () => {
+  const result = spawnSync(process.execPath, [validator], { encoding: "utf8" });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /usage:.*validate-fnos-release\.mjs.*<rendered-compose-path>/i);
+  assert.doesNotMatch(result.stderr, /could not parse/i);
+});
+
 test("accepts a digest-pinned release Compose with a required runtime API secret", async (t) => {
   const compose = await fixture(t, validCompose());
   const result = validate(compose);

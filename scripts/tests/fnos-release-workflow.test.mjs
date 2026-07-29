@@ -25,9 +25,25 @@ test("fnOS release workflow pins actions and scopes package permissions", async 
   assert.doesNotMatch(job(workflow, "quality"), /packages: write/);
   assert.doesNotMatch(job(workflow, "local-amd64-smoke"), /packages: write/);
   assert.match(job(workflow, "inspect-staging"), /permissions:\n      contents: read\n      packages: read/);
+  assert.match(job(workflow, "smoke-staging"), /permissions:\n      contents: read\n      packages: read/);
   for (const name of ["staging", "promote"]) {
     assert.match(job(workflow, name), /permissions:\n      contents: read\n      packages: write/);
   }
+});
+
+test("promotion requires an exact captured-digest runtime smoke", async () => {
+  const workflow = await readFile(workflowPath, "utf8");
+  const smoke = job(workflow, "smoke-staging");
+  const promote = job(workflow, "promote");
+
+  assert.match(smoke, /needs: inspect-staging/);
+  assert.match(smoke, /API_IMAGE: ghcr\.io\/luoshuai990529\/sag-api@\$\{\{ needs\.inspect-staging\.outputs\.api_digest \}\}/);
+  assert.match(smoke, /WEB_IMAGE: ghcr\.io\/luoshuai990529\/sag-web@\$\{\{ needs\.inspect-staging\.outputs\.web_digest \}\}/);
+  assert.match(smoke, /smoke-fnos-release-images\.mjs smoke/);
+  assert.match(smoke, /if: \$\{\{ always\(\) \}\}/);
+  assert.match(smoke, /smoke-fnos-release-images\.mjs cleanup/);
+  assert.doesNotMatch(smoke, /STAGING_TAG|staging-fnos|build-push-action|sag-(api|web)-smoke:/);
+  assert.match(promote, /needs: \[candidate, inspect-staging, smoke-staging\]/);
 });
 
 test("fnOS release workflow invokes the executable digest handoff and promotion state machine", async () => {

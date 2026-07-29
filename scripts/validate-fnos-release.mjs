@@ -9,8 +9,11 @@ import {
   validateGatewayImageReference,
 } from "./fnos-gateway-policy.mjs";
 
-const defaultCompose = "packages/fnos/sag/docker-compose.yml";
-const composePath = path.resolve(process.cwd(), process.argv[2] || defaultCompose);
+if (process.argv.length !== 3) {
+  console.error("usage: node scripts/validate-fnos-release.mjs <rendered-compose-path>");
+  process.exit(2);
+}
+const composePath = path.resolve(process.cwd(), process.argv[2]);
 const immutableDigest = /@sha256:[a-f0-9]{64}$/i;
 const requiredSecretReference = /^\$\{SAG_SECRET_KEY:?\?[^}]*\}$/;
 const requiredBootstrapReference = /^\$\{SAG_AUTH_BOOTSTRAP_TOKEN:?\?[^}]*\}$/;

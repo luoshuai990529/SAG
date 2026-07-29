@@ -136,11 +136,13 @@ GHCR。
 本地冒烟成功后，工作流才把 amd64+arm64 的 manifest index 推送到本次运行唯一
 的 `staging-fnos-<run>-<attempt>-<sha>` 标签。它检查 staging 原始 index、拉取
 amd64 staging 镜像并验证 OCI revision/version 元数据，最后以服务器端
-`imagetools create` 把已验证的 index digest 提升为候选版本和 `sha-<commit>`
-标签。已验证 digest 会作为 job output 和 artifact 保存；promotion 不再读取可变
-staging tag，而是对四个最终引用逐个对账：缺失则创建，已指向同一 digest 则接受，
-不同 digest 则失败，并在结束后再次确认全部引用。候选包仍只声明 x86；arm64
-镜像构建成功不等于 ARM64 fnOS 已认证。
+已验证 digest 会作为 job output 和 artifact 保存。promotion 前，独立只读 job 只用
+这两个 `image@digest` 在 amd64 runner 再次 pull/run：API 使用随机强密钥与临时数据卷
+验证 ready、name-only 401、bootstrap 初始化和日常密码登录，Web 验证根路径与登录页；
+资源在 `always()` 清理。通过后才用 `imagetools create` 提升为候选版本和
+`sha-<commit>` 标签。promotion 不再读取可变 staging tag，而是对四个最终引用逐个
+对账：缺失则创建，已指向同一 digest 则接受，不同 digest 则失败，并在结束后再次
+确认全部引用。候选包仍只声明 x86；arm64 镜像构建成功不等于 ARM64 fnOS 已认证。
 
 预提升失败可以重新运行：新的 run attempt 使用新的 staging 标签；部分 promotion
 重试会补齐缺失且同一 release digest 的最终标签，并拒绝流程自身观察到的不同 digest。

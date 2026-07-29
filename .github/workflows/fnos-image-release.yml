@@ -284,9 +284,40 @@ jobs:
         run: |
           echo "::notice::Staging tags $STAGING_TAG are retained. Delete only by an audited tag-specific GHCR operation; deleting a digest could remove promoted content."
 
+  smoke-staging:
+    name: Smoke exact captured linux/amd64 digests
+    needs: inspect-staging
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    env:
+      API_IMAGE: ghcr.io/luoshuai990529/sag-api@${{ needs.inspect-staging.outputs.api_digest }}
+      WEB_IMAGE: ghcr.io/luoshuai990529/sag-web@${{ needs.inspect-staging.outputs.web_digest }}
+      SMOKE_SCOPE: release-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull and smoke exact captured digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/smoke-fnos-release-images.mjs smoke --docker docker --curl curl --api-image "$API_IMAGE" --web-image "$WEB_IMAGE" --scope "$SMOKE_SCOPE"
+      - name: Always clean exact-digest smoke resources
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          node scripts/smoke-fnos-release-images.mjs cleanup --docker docker --scope "$SMOKE_SCOPE"
+
   promote:
     name: Reconcile final tags to verified digests
-    needs: [candidate, inspect-staging]
+    needs: [candidate, inspect-staging, smoke-staging]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

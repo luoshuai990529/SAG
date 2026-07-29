@@ -23,8 +23,9 @@
   staging 前还会用 checksum 固定的 Trivy 扫描受评审、未过期的 Nginx
   `linux/amd64` digest；存在可修复 Critical/High 或 OCI 平台 metadata 不一致时
   禁止发布。
-  只有原始多架构 index 与 staging 运行时 OCI 元数据都通过检查后，才按 digest
-  对账式地提升候选和 commit 标签：缺失则创建、已指向同一 digest 则接受、指向
+  只有原始多架构 index、staging 运行时 OCI 元数据以及捕获 digest 的独立 amd64
+  密码认证/Web HTTP 冒烟都通过后，才按 digest 对账式地提升候选和 commit 标签：
+  缺失则创建、已指向同一 digest 则接受、指向
   不同 digest 则失败。该流程不能替代 GHCR 的 registry 级不可变策略；包消费者
   必须继续使用 digest。staging tag 的安全清理需要 tag 级 GHCR 操作，不能按
   digest 删除。
