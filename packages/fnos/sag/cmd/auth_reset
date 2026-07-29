@@ -1,0 +1,158 @@
+#!/bin/bash
+
+set -eu
+
+log_error() {
+    printf '%s\n' "$1" >> "${TRIM_TEMP_LOGFILE}"
+}
+
+umask 077
+
+if [ "$#" -ne 1 ] || [ "$1" != "--confirm-local-reset" ]; then
+    log_error "SAG auth recovery requires the explicit --confirm-local-reset option."
+    exit 2
+fi
+
+canonical_dir() {
+    (cd -P -- "$1" 2>/dev/null && pwd -P)
+}
+
+normalize_trailing_slashes() {
+    normalized="$1"
+    while [ "${normalized}" != "/" ] && [ "${normalized%/}" != "${normalized}" ]; do
+        normalized="${normalized%/}"
+    done
+    printf '%s\n' "${normalized}"
+}
+
+validate_owned_canonical_dir() {
+    candidate="$1"
+    label="$2"
+    case "${candidate}" in
+        /*) ;;
+        *)
+            log_error "SAG auth recovery rejected unsafe ${label}: path is not absolute."
+            return 1
+            ;;
+    esac
+    if [ ! -d "${candidate}" ] || [ -L "${candidate}" ] || [ ! -O "${candidate}" ]; then
+        log_error "SAG auth recovery rejected unsafe ${label}; verify it is an owned real directory."
+        return 1
+    fi
+    resolved="$(canonical_dir "${candidate}")" || {
+        log_error "SAG auth recovery could not resolve ${label}."
+        return 1
+    }
+    if [ "${resolved}" != "${candidate}" ]; then
+        log_error "SAG auth recovery rejected unsafe noncanonical ${label}."
+        return 1
+    fi
+}
+
+valid_hex_secret() {
+    value="$1"
+    case "${value}" in
+        *[!0-9a-f]*|'') return 1 ;;
+    esac
+    [ "${#value}" -eq 64 ]
+}
+
+generate_secret() {
+    generated="$(openssl rand -hex 32)" || return 1
+    valid_hex_secret "${generated}" || return 1
+    printf '%s\n' "${generated}"
+}
+
+pkgvar_dir="$(normalize_trailing_slashes "${TRIM_PKGVAR}")"
+pkgetc_dir="$(normalize_trailing_slashes "${TRIM_PKGETC}")"
+data_dir="${pkgvar_dir}/data"
+secret_file="${pkgetc_dir}/sag.env"
+compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
+
+validate_owned_canonical_dir "${pkgvar_dir}" "package variable directory" || exit 1
+validate_owned_canonical_dir "${pkgetc_dir}" "package configuration directory" || exit 1
+validate_owned_canonical_dir "${data_dir}" "active data directory" || exit 1
+
+if [ ! -f "${secret_file}" ] || [ -L "${secret_file}" ] || [ ! -O "${secret_file}" ]; then
+    log_error "SAG auth recovery requires an owned regular sag.env."
+    exit 1
+fi
+if ! chmod 600 "${secret_file}"; then
+    log_error "SAG auth recovery could not protect sag.env."
+    exit 1
+fi
+
+session_secret=""
+bootstrap_secret=""
+line_count=0
+while IFS= read -r secret_line || [ -n "${secret_line}" ]; do
+    line_count=$((line_count + 1))
+    case "${line_count}:${secret_line}" in
+        1:SAG_SECRET_KEY=*)
+            session_secret="${secret_line#SAG_SECRET_KEY=}"
+            ;;
+        2:SAG_AUTH_BOOTSTRAP_TOKEN=*)
+            bootstrap_secret="${secret_line#SAG_AUTH_BOOTSTRAP_TOKEN=}"
+            ;;
+        *)
+            log_error "SAG auth recovery found an invalid sag.env; refusing to overwrite it."
+            exit 1
+            ;;
+    esac
+done < "${secret_file}"
+
+if ! valid_hex_secret "${session_secret}" ||
+    ! valid_hex_secret "${bootstrap_secret}" ||
+    [ "${session_secret}" = "${bootstrap_secret}" ]; then
+    log_error "SAG auth recovery found invalid auth secrets; refusing to overwrite them."
+    exit 1
+fi
+
+running_ids="$(docker compose -f "${compose_file}" ps --status running -q 2>> "${TRIM_TEMP_LOGFILE}")" || {
+    log_error "SAG auth recovery could not determine application state."
+    exit 1
+}
+if [ -n "${running_ids}" ]; then
+    log_error "SAG auth recovery requires the application to be stopped."
+    exit 1
+fi
+
+new_bootstrap="$(generate_secret)" || {
+    log_error "SAG auth recovery could not generate a new bootstrap credential."
+    exit 1
+}
+if [ "${new_bootstrap}" = "${session_secret}" ] || [ "${new_bootstrap}" = "${bootstrap_secret}" ]; then
+    log_error "SAG auth recovery generated a duplicate credential; retry the operation."
+    exit 1
+fi
+
+secret_temp="${secret_file}.reset.$$"
+trap 'rm -f -- "${secret_temp}"' EXIT HUP INT TERM
+if ! printf 'SAG_SECRET_KEY=%s\nSAG_AUTH_BOOTSTRAP_TOKEN=%s\n' \
+    "${session_secret}" "${new_bootstrap}" > "${secret_temp}"; then
+    log_error "SAG auth recovery could not stage the new protected credential."
+    exit 1
+fi
+if ! chmod 600 "${secret_temp}"; then
+    log_error "SAG auth recovery could not protect the staged credential."
+    exit 1
+fi
+
+if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
+    -e SAG_LIFECYCLE_ACTION=auth-reset lifecycle-auth-reset /opt/sag-lifecycle.py \
+    >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
+    log_error "SAG auth recovery database reset failed; the existing credential was preserved."
+    exit 1
+fi
+
+if ! mv -- "${secret_temp}" "${secret_file}"; then
+    log_error "SAG auth recovery revoked sessions but could not publish the new credential; retry while the app remains stopped."
+    exit 1
+fi
+if ! chmod 600 "${secret_file}"; then
+    log_error "SAG auth recovery published the new credential but could not confirm private permissions."
+    exit 1
+fi
+
+trap - EXIT HUP INT TERM
+exit 0

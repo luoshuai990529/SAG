@@ -14,6 +14,11 @@ Mac -> WINDOWS_HOST:3080 -> VMware NAT -> FNOS_VM_IP:3080 -> sag-gateway:80
 192.168.50.178:3080 -> 192.168.252.10:3080
 ```
 
+候选版的 `3080` 是明文 HTTP。整条链路只允许位于可信、隔离的私有 LAN 或受控
+VPN 内；不得在公共/共享 Wi-Fi 或任何不可信二层网络上输入用户密码、bootstrap、
+模型密钥或 Bearer Token。若来源网络不完全可信，先在 `3080` 前部署带有效证书的
+HTTPS 反向代理并限制其回源，TLS 验收未通过前不得对该网络开放 SAG。
+
 在 Windows 上关闭 SAG 相关应用后，通过 VMware Virtual Network Editor 选择 fnOS VM 使用的 NAT 网络（当前为 VMnet8），打开 NAT Settings，新增：
 
 | 字段 | 值 |
@@ -25,7 +30,7 @@ Mac -> WINDOWS_HOST:3080 -> VMware NAT -> FNOS_VM_IP:3080 -> sag-gateway:80
 
 保存后确认没有重复或冲突的 `3080` 规则。若 fnOS VM 地址改变，应先恢复固定地址，再更新转发。
 
-以管理员 PowerShell 增加仅允许本地 Wi-Fi 网段的入站规则：
+以管理员 PowerShell 增加仅允许当前可信隔离网段的入站规则：
 
 ```powershell
 New-NetFirewallRule `
@@ -90,9 +95,9 @@ $rows = foreach ($rule in Get-NetFirewallRule `
 $rows | Sort-Object DisplayName | Format-List
 ```
 
-逐条确认输出：适用于 `3080` 的通用规则必须禁用/删除，或通过 `RemoteAddress` 及程序/服务作用域证明不会扩大访问；目标 SAG 规则应显示 `RemoteAddress=192.168.50.0/24`、TCP、Private。不能只检查名字中含 `SAG` 的规则。
+逐条确认输出：适用于 `3080` 的通用规则必须禁用/删除，或通过 `RemoteAddress` 及程序/服务作用域证明不会扩大访问；只有当 `192.168.50.0/24` 的全部设备都受信时，目标 SAG 规则才可使用该网段，否则必须收窄为维护 Mac 或受控 VPN 地址。规则应显示 TCP、Private。不能只检查名字中含 `SAG` 的规则。
 
-不要配置路由器公网端口映射。SAG 候选版只面向可信局域网。
+不要配置路由器公网端口映射。SAG 候选版只面向可信隔离局域网或受控 VPN。
 
 ## 2. 发布公开 GHCR 镜像
 
@@ -201,8 +206,8 @@ node scripts/build-fnos-package.mjs \
 5. 从应用卡片打开 SAG；
 6. 在 fnOS 私有终端确认 `${TRIM_PKGETC}/sag.env` 为 `0600`，取得
    `SAG_AUTH_BOOTSTRAP_TOKEN` 的值；不要把它写入命令参数、shell 历史、日志或截图；
-7. 首次登录填写名字、至少 12 位的独立用户密码和该初始化密钥。用户密码不得与
-   bootstrap 凭据或 `SAG_SECRET_KEY` 相同；
+7. 首次登录填写名字、至少 12 位且 UTF-8 编码不超过 72 字节的独立用户密码和该
+   初始化密钥。用户密码不得与 bootstrap 凭据或 `SAG_SECRET_KEY` 相同；
 8. 退出后只用同一个名字和用户密码重新登录，初始化密钥留空；确认只给名字、
    错误密码或不同名字都返回同一认证失败，且不会修改已有名字；
 9. 确认不能继续公开注册；
@@ -210,10 +215,31 @@ node scripts/build-fnos-package.mjs \
 11. 私下录入测试模型凭据，再验证上传、索引、检索、SSE 问答和引用打开。
 
 `sag.env` 是服务器端私有配置，不随 `.fpk` 分发。安装脚本分别随机生成 JWT
-会话密钥和 bootstrap 凭据，两者都为 64 位十六进制且不得相同。需要查看
-bootstrap 值时，先从 fnOS 应用运行信息取得真实 `TRIM_PKGETC`，再在不录屏、
-不采集 shell 输出的私有维护会话中读取该文件；完成页面录入后清除终端显示和剪贴板。
-验收证据只记录“初始化成功/失败分支通过”，绝不记录凭据值。
+会话密钥和一次性 bootstrap 凭据，两者都为 64 位十六进制且不得相同。初始化
+成功会递增用户认证版本，使初始化前 JWT 失效；同一个 bootstrap 不能再远程重置
+密码。需要查看 bootstrap 值时，先从 fnOS 应用运行信息取得真实 `TRIM_PKGETC`，
+再在不录屏、不采集 shell 输出的私有维护会话中读取该文件；完成页面录入后清除
+终端显示和剪贴板。验收证据只记录“初始化成功/失败分支通过”，绝不记录凭据值。
+
+### 本地管理员密码恢复
+
+远程登录接口不会长期接受安装时的 bootstrap。遗忘密码时，在 fnOS 本机的私有
+维护会话中：
+
+1. `appcenter-cli stop sag`，确认 SAG 全部服务已停止；
+2. 从应用运行信息取得准确的 `TRIM_APPDEST`、`TRIM_PKGVAR`、`TRIM_PKGETC` 和
+   `TRIM_TEMP_LOGFILE`，不要猜测路径；
+3. 在具备 fnOS 应用维护权限且上述变量已设置的上下文运行
+   `"${TRIM_APPDEST}/cmd/auth_reset" --confirm-local-reset`；
+4. 命令成功后保持终端和日志脱敏，从权限 `0600` 的 `sag.env` 私下取得已轮换的
+   bootstrap；该命令不会把新值打印到 stdout 或日志；
+5. `appcenter-cli start sag`，使用原名字、至少 12 位且 UTF-8 不超过 72 字节的
+   新密码和新 bootstrap 完成一次初始化。
+
+恢复事务会先使数据库中的用户进入待初始化状态并递增认证版本，再原子发布新
+bootstrap，因此所有旧 JWT 都立即失效。数据库事务失败时原 `sag.env` 保持不变；
+若极少数情况下数据库已提交但密钥文件原子替换失败，应用必须继续停止，修复本地
+文件问题后重试，不能开放远程入口。
 
 也可以在 fnOS 设备 shell 使用官方 `appcenter-cli`：
 
@@ -235,3 +261,8 @@ open http://192.168.50.178:3080
 ```
 
 验证浏览器只访问 `3080`，Network 面板中的 REST、SSE 和 MCP 请求保持同源；不得出现对宿主机 `8000` 或 `3000` 的请求。
+
+内置网关不终止 TLS。Web 会在浏览器实际使用 HTTPS 时为认证 Cookie 增加
+`Secure`，HTTP 时不能添加该属性。当前 Bearer 架构需要浏览器 JavaScript 读取
+Token，所以 Cookie 仍是 `SameSite=Lax` 且不是 `HttpOnly`；这也是必须避免不可信
+网络、严格控制前端 XSS 并在外部 TLS 边界完成验收的原因。

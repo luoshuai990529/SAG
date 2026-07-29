@@ -6,10 +6,17 @@
 
 - 候选包声明 `platform=x86`、`os_min_version=1.2.0302`，当前认证目标仅为 x86-64 VMware fnOS 测试机。
 - 安装时需要 fnOS 在不登录仓库的情况下匿名拉取公开 GHCR 镜像和 Docker Hub 官方 Nginx 镜像。发布包必须使用 API、Web、Nginx 的 manifest-list digest，不能使用 `latest` 或可变标签。
-- API `8000` 和 Web `3000` 只在 Compose 网络内可见；用户入口为 `http://<fnOS 可达地址>:3080`。
-- fnOS 包显式启用密码认证。首次设置、旧版密码初始化和管理员重置需要
-  `${TRIM_PKGETC}/sag.env` 中独立生成的 bootstrap 凭据；之后登录只使用原名字
-  和用户密码，不能通过名字登录或改名取得令牌。本地开发仍默认保留无密码名字登录。
+- API `8000` 和 Web `3000` 只在 Compose 网络内可见；用户入口仍为
+  `http://<fnOS 可达地址>:3080`。这个明文 HTTP 入口只允许用于可信、隔离的
+  私有 LAN 或受控 VPN；不得在公共/共享 Wi-Fi 或其他不可信链路上输入密码、
+  bootstrap、模型密钥或 Bearer Token。任何不可信网络访问都必须先由外部反向代理
+  提供 HTTPS，TLS 门禁未完成前不得开放。
+- fnOS 包显式启用密码认证。首次设置和旧版密码初始化需要
+  `${TRIM_PKGETC}/sag.env` 中独立生成的一次性 bootstrap 凭据；初始化成功后远程
+  重放该值会被拒绝。遗忘密码时必须先停服，再由 fnOS 本地维护者运行
+  `cmd/auth_reset --confirm-local-reset`，该命令轮换 bootstrap、使全部已有 JWT
+  失效，并把唯一用户恢复为待初始化状态。之后使用原名字、新密码和新 bootstrap
+  完成一次初始化。不能通过名字登录或改名取得令牌。本地开发仍默认保留无密码名字登录。
 - Mac 已完成 Docker、Buildx、Compose、`fnpack` 和 `hello-world` 本地准备。`appcenter-cli` 是 fnOS 设备上的工具，不是 Mac 必装工具。
 - 源码、生命周期测试和临时结构包已经具备；公开 GHCR 镜像、正式 `.fpk`、Windows `3080` NAT、防火墙和 fnOS UI 生命周期验收仍是外部门禁。
 - 候选发布先在 CI runner 本地 smoke amd64，再写入每次运行唯一的 GHCR staging tag；

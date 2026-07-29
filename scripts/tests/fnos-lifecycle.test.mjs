@@ -74,6 +74,9 @@ case "$*" in
     fi
     exit 0
     ;;
+  *SAG_LIFECYCLE_ACTION=auth-reset*)
+    exit "\${FAKE_HELPER_AUTH_RESET_EXIT:-0}"
+    ;;
 esac
 exit "\${FAKE_DOCKER_EXIT:-0}"
   `);
@@ -96,7 +99,7 @@ exit "\${FAKE_DF_EXIT:-0}"
   `);
   await writeCommand(binDir, "chmod", `
 case "$*" in
-  *sag.env.tmp.*) if [ "\${FAKE_CHMOD_EXIT:-0}" -ne 0 ]; then exit "$FAKE_CHMOD_EXIT"; fi ;;
+  *sag.env.tmp.*|*sag.env.reset.*) if [ "\${FAKE_CHMOD_EXIT:-0}" -ne 0 ]; then exit "$FAKE_CHMOD_EXIT"; fi ;;
 esac
 exec /bin/chmod "$@"
   `);
@@ -221,6 +224,160 @@ test("container lifecycle helper rejects traversal and exclusive-create collisio
   });
   assert.notEqual(collided.status, 0);
   assert.equal(await readFile(collision, "utf8"), "preserve-existing");
+});
+
+test("container lifecycle helper atomically revokes the sole password user", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-helper-auth-reset-"));
+  const data = path.join(root, "data");
+  const backup = path.join(root, "backup");
+  const database = path.join(data, "sag.db");
+  await mkdir(data, { recursive: true });
+  await mkdir(backup, { recursive: true });
+  t.after(async () => rm(root, { recursive: true, force: true }));
+
+  const created = spawnSync("python3", [
+    "-c",
+    [
+      "import sqlite3, sys",
+      "db = sqlite3.connect(sys.argv[1])",
+      "db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, password_initialized BOOLEAN NOT NULL, auth_version INTEGER NOT NULL)')",
+      "db.execute('INSERT INTO users VALUES (1, 1, 7)')",
+      "db.commit()",
+    ].join(";"),
+    database,
+  ], { encoding: "utf8" });
+  assert.equal(created.status, 0, created.stderr);
+
+  const reset = spawnSync("python3", [helperScript], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      SAG_DATA_ROOT: data,
+      SAG_BACKUP_ROOT: backup,
+      SAG_LIFECYCLE_ACTION: "auth-reset",
+    },
+  });
+  assert.equal(reset.status, 0, reset.stderr);
+  assert.equal(reset.stdout, "");
+  assert.equal(reset.stderr, "");
+
+  const queried = spawnSync("python3", [
+    "-c",
+    "import sqlite3,sys; print(*sqlite3.connect(sys.argv[1]).execute('SELECT password_initialized, auth_version FROM users').fetchone())",
+    database,
+  ], { encoding: "utf8" });
+  assert.equal(queried.status, 0, queried.stderr);
+  assert.equal(queried.stdout.trim(), "0 8");
+});
+
+test("container lifecycle helper refuses ambiguous users without changing any row", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-helper-auth-ambiguous-"));
+  const data = path.join(root, "data");
+  const backup = path.join(root, "backup");
+  const database = path.join(data, "sag.db");
+  await mkdir(data, { recursive: true });
+  await mkdir(backup, { recursive: true });
+  t.after(async () => rm(root, { recursive: true, force: true }));
+
+  const created = spawnSync("python3", [
+    "-c",
+    [
+      "import sqlite3, sys",
+      "db = sqlite3.connect(sys.argv[1])",
+      "db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, password_initialized BOOLEAN NOT NULL, auth_version INTEGER NOT NULL)')",
+      "db.executemany('INSERT INTO users VALUES (?, 1, ?)', [(1, 3), (2, 4)])",
+      "db.commit()",
+    ].join(";"),
+    database,
+  ], { encoding: "utf8" });
+  assert.equal(created.status, 0, created.stderr);
+
+  const reset = spawnSync("python3", [helperScript], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      SAG_DATA_ROOT: data,
+      SAG_BACKUP_ROOT: backup,
+      SAG_LIFECYCLE_ACTION: "auth-reset",
+    },
+  });
+  assert.notEqual(reset.status, 0);
+  assert.match(reset.stderr, /exactly one password user/i);
+
+  const queried = spawnSync("python3", [
+    "-c",
+    "import sqlite3,sys; print(list(sqlite3.connect(sys.argv[1]).execute('SELECT id, password_initialized, auth_version FROM users ORDER BY id')))",
+    database,
+  ], { encoding: "utf8" });
+  assert.equal(queried.status, 0, queried.stderr);
+  assert.equal(queried.stdout.trim(), "[(1, 1, 3), (2, 1, 4)]");
+});
+
+test("local auth reset requires a stopped app and rotates only the bootstrap secret", async (t) => {
+  const fixture = await lifecycleFixture(t, { FAKE_COMPOSE_RUNNING_IDS: "" });
+  const installed = runScript("install_callback", fixture.env);
+  assert.equal(installed.status, 0, installed.stderr);
+  const envFile = path.join(fixture.pkgEtc, "sag.env");
+  const before = await readFile(envFile, "utf8");
+  const [, sessionBefore, bootstrapBefore] = before.match(
+    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
+  );
+
+  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  const after = await readFile(envFile, "utf8");
+  const [, sessionAfter, bootstrapAfter] = after.match(
+    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
+  );
+  assert.equal(sessionAfter, sessionBefore);
+  assert.notEqual(bootstrapAfter, bootstrapBefore);
+  assert.notEqual(bootstrapAfter, sessionAfter);
+  assert.equal((await stat(envFile)).mode & 0o777, 0o600);
+  assert.match(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
+  const observable = [
+    result.stdout,
+    result.stderr,
+    await readFile(fixture.tempLog, "utf8"),
+    await readFile(fixture.commandLog, "utf8"),
+  ].join("\n");
+  assert.doesNotMatch(observable, new RegExp(`${bootstrapBefore}|${bootstrapAfter}`));
+});
+
+test("local auth reset refuses a running app without rotating or touching the database", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const installed = runScript("install_callback", fixture.env);
+  assert.equal(installed.status, 0, installed.stderr);
+  const envFile = path.join(fixture.pkgEtc, "sag.env");
+  const before = await readFile(envFile, "utf8");
+
+  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
+
+  assert.notEqual(result.status, 0);
+  assert.equal(await readFile(envFile, "utf8"), before);
+  assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
+  assert.match(await readFile(fixture.tempLog, "utf8"), /to be stopped/i);
+});
+
+test("local auth reset preserves the old bootstrap when the database transaction fails", async (t) => {
+  const fixture = await lifecycleFixture(t, {
+    FAKE_COMPOSE_RUNNING_IDS: "",
+    FAKE_HELPER_AUTH_RESET_EXIT: "7",
+  });
+  const installed = runScript("install_callback", fixture.env);
+  assert.equal(installed.status, 0, installed.stderr);
+  const envFile = path.join(fixture.pkgEtc, "sag.env");
+  const before = await readFile(envFile, "utf8");
+
+  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
+
+  assert.notEqual(result.status, 0);
+  assert.equal(await readFile(envFile, "utf8"), before);
+  assert.deepEqual(
+    (await readdir(fixture.pkgEtc)).filter((name) => name.startsWith("sag.env.reset.")),
+    [],
+  );
+  assert.match(await readFile(fixture.tempLog, "utf8"), /database reset failed/i);
 });
 
 test("container lifecycle helper cleans partial archives and preserves symlink semantics", async (t) => {

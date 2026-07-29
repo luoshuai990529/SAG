@@ -273,6 +273,7 @@ test("lifecycle scripts have valid Bash syntax and the official callback shape",
     "upgrade_callback",
     "uninstall_init",
     "uninstall_callback",
+    "auth_reset",
   ];
 
   for (const script of scripts) {
@@ -333,6 +334,7 @@ test("structural mode renders and fnpack-builds an official package only in a te
     "lifecycle-size": [["/data", true], ["/opt/sag-lifecycle.py", true]],
     "lifecycle-backup": [["/data", true], ["/backup", false], ["/opt/sag-lifecycle.py", true]],
     "lifecycle-delete": [["/data", false], ["/opt/sag-lifecycle.py", true]],
+    "lifecycle-auth-reset": [["/data", false], ["/opt/sag-lifecycle.py", true]],
   };
   for (const [name, mounts] of Object.entries(expectedMounts)) {
     const service = helperServices[name];

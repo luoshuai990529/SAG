@@ -28,12 +28,12 @@
 | MAC-02 | `fnpack` 安装与校验 | 通过 | 1.2.3；SHA-256 `d40cb00896cb2a5d211357d255750ed0cbe7f2d141df671c2b717afb4e74bf77` | [Mac 准备](./mac-preparation.md) |
 | MAC-03 | 官方 hello-docker 本地 `fnpack build` | 通过 | 临时 `.fpk` SHA-256 `39c0090f2ca037c70af42c1197c1940329959722ceca2a914cdb291e90f61b87` | [Mac 准备](./mac-preparation.md) |
 | CODE-01 | API Ruff | 通过 | `uv run ruff check sag_api/ sag_agent/ tests/`：All checks passed | 命令摘要；截图不适用 |
-| CODE-02 | API pytest | 通过 | `uv run python -m pytest -q`：199 passed，1 条 SQLAlchemy warning | 命令摘要；截图不适用 |
-| CODE-03 | Web 单测 | 通过 | `npm run test:unit`：48 files、356 tests passed | 命令摘要；截图不适用 |
+| CODE-02 | API pytest | 通过 | `uv run python -m pytest -q`：209 tests collected，本轮全量命令完成且无失败；认证相关聚焦回归 42 passed | 命令摘要；截图不适用 |
+| CODE-03 | Web 单测 | 通过 | `npm run test:unit`：49 files、358 tests passed | 命令摘要；截图不适用 |
 | CODE-04 | Web 类型/Lint/生产构建 | 通过 | `tsc --noEmit`、ESLint 0 warning、Next.js 15.5.20 production build 均通过 | 命令摘要；截图不适用 |
 | PKG-01 | 发布 Compose 拒绝可变镜像、弱密钥和额外端口 | 通过 | CI 运行发布 Compose、包、生命周期与文档行为测试；以 CI 日志的具体测试清单为准，不维护易过期的合计数字 | 命令摘要；截图不适用 |
 | PKG-02 | 生命周期脚本与完整数据冷备行为 | 通过 | 包含空间/命令失败、冷备原子发布、失败后服务恢复和卸载选择回归 | 命令摘要；截图不适用 |
-| PKG-03 | Shell/JSON/Compose 静态检查 | 通过 | 9 个 Bash 脚本、4 个 JSON、源码与包模板 Compose config 均通过 | 命令摘要；截图不适用 |
+| PKG-03 | Shell/JSON/Compose 静态检查 | 通过 | 10 个 Bash 脚本、4 个 JSON、源码与包模板 Compose config 均通过 | 命令摘要；截图不适用 |
 | PKG-04 | 临时结构包 `fnpack build` 和 SHA-256 | 通过 | 使用 `test.invalid` digest 仅在临时目录构建；SHA-256 `3cd3fc69ff43a55ccdf256f4bb3473c6f27bd47c4bd258f80d96dc72a40213fc`；不可分发 | 命令摘要；截图不适用 |
 | PKG-05 | 正式 `sag-1.4.0-fnos.1.fpk` 和 SHA-256 | 阻塞 | API/Web 公共 manifest-list digest 尚未发布，构建脚本会拒绝不存在的引用 | `docs/fnos/evidence/2026-07-29/pkg-05/summary.md`（待生成） |
 
@@ -45,14 +45,16 @@
 | NET-02 | Windows `3080` NAT 与 `/24` 防火墙限制 | 待执行 | 需在 Windows VMware/防火墙配置后从 Mac 验证 | `docs/fnos/evidence/<date>/net-02/` |
 | FPK-01 | hello-docker 安装、打开、启停、卸载 | 待执行 | fnOS 管理会话需要用户登录 | `docs/fnos/evidence/<date>/fpk-01/` |
 | FPK-02 | SAG 全新安装、桌面打开、无模型密钥启动 | 阻塞 | 依赖 PKG-05、NET-02 和 fnOS 登录 | `docs/fnos/evidence/<date>/fpk-02/` |
-| FPK-03 | 密码模式首次初始化与日常登录 | 待执行 | 私有 bootstrap + ≥12 位密码创建首个用户；缺失/错误密码、仅名字、不同名字和改名均以相同错误拒绝；正确名字+密码成功；第二次公开注册被拒绝。证据不得包含 bootstrap、密码或 `sag.env` 内容 | `docs/fnos/evidence/<date>/fpk-03/` |
+| FPK-03 | 密码模式首次初始化与日常登录 | 待执行 | 一次性私有 bootstrap + ≥12 位且 UTF-8 ≤72 字节的密码创建首个用户；缺失/错误密码、仅名字、不同名字和改名均以相同错误拒绝；正确名字+密码成功；初始化后 bootstrap 重放及第二次公开注册被拒绝。证据不得包含 bootstrap、密码或 `sag.env` 内容 | `docs/fnos/evidence/<date>/fpk-03/` |
+| FPK-04 | 本地管理员认证恢复 | 待执行 | 应用运行时拒绝恢复；停服后 `cmd/auth_reset --confirm-local-reset` 轮换 bootstrap 且不输出密钥、使旧 JWT 失效、保留原名字；原名字+新密码+新 bootstrap 仅可初始化一次 | `docs/fnos/evidence/<date>/fpk-04/` |
+| NET-03 | HTTP/TLS 信任边界 | 待执行 | `:3080` 仅在可信隔离 LAN/受控 VPN 使用；公共/共享 Wi-Fi 禁止输入任何凭据。任何不可信访问以外部 HTTPS 反向代理验收为前置门禁；HTTPS 下 Cookie 有 Secure，当前 Bearer 架构不支持 HttpOnly | `docs/fnos/evidence/<date>/net-03/` |
 | BIZ-01 | Markdown/PDF 上传、抽取、索引、检索 | 待执行 | 凭据私下录入且不进入证据 | `docs/fnos/evidence/<date>/biz-01/` |
 | BIZ-02 | SSE 流式问答和引用打开 | 待执行 | 浏览器请求保持 `:3080` 同源，无 CORS/SSE 中断 | `docs/fnos/evidence/<date>/biz-02/` |
 | BIZ-03 | MCP URL 和转发头 | 待执行 | `/mcp/` 同源，Host/X-Forwarded-* 正确 | `docs/fnos/evidence/<date>/biz-03/` |
 | DATA-01 | 停止/启动、容器重建、fnOS 重启数据保留 | 待执行 | 用户、SQLite、LanceDB、上传原文和索引均保留 | `docs/fnos/evidence/<date>/data-01/` |
 | DATA-02 | 完整冷备恢复到新实例 | 待执行 | 恢复完整 `/data`，旧文档可检索和打开 | `docs/fnos/evidence/<date>/data-02/` |
 | PATH-01 | 生命周期 callback 路径信任链与最终 bind source | 待执行 | 在 UPG-01、UN-02 前记录 callback EUID/EGID；逐级记录所有能替换 `${TRIM_PKGVAR}`、`data`、`backup` 的祖先目录所有者及组/其他用户写权限；记录 `docker compose config` 解析结果和实际容器最终 bind source。脱敏证据必须保留为 `summary.md` 和 `command.log` | `docs/fnos/evidence/<date>/path-01/` |
-| UPG-01 | `1.4.0-fnos.0 -> 1.4.0-fnos.1` | 待执行 | 前置 PATH-01 通过；备份空间门禁、冷备；原 JWT secret 不轮换、独立 bootstrap 原子补齐；旧用户只可用原名字+bootstrap+新密码初始化，名字/历史隐式密码不能登录；旧知识库可检索 | `docs/fnos/evidence/<date>/upg-01/` |
+| UPG-01 | `1.4.0-fnos.0 -> 1.4.0-fnos.1` | 待执行 | 前置 PATH-01 通过；备份空间门禁、冷备；原 JWT secret 不轮换、独立一次性 bootstrap 原子补齐；缺少认证版本的旧 JWT 被拒绝；旧用户只可用原名字+bootstrap+新密码初始化，名字/历史隐式密码不能登录；旧知识库可检索 | `docs/fnos/evidence/<date>/upg-01/` |
 | UPG-02 | 模拟失败与回滚 | 待执行 | 活动数据不损坏，完整数据与匹配镜像一起回滚 | `docs/fnos/evidence/<date>/upg-02/` |
 | UN-01 | 默认保留卸载并重装恢复 | 待执行 | 先确认 fnOS 是否清理私有运行目录；必要时使用外部保留副本 | `docs/fnos/evidence/<date>/un-01/` |
 | UN-02 | 明确删除数据卸载 | 待执行 | 前置 PATH-01 通过；仅显式选择后删除；执行前二次确认外部备份 | `docs/fnos/evidence/<date>/un-02/` |

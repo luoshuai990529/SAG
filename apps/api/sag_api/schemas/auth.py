@@ -4,12 +4,22 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from sag_api.core.security import password_bytes
+
+
+def _bounded_password(value: str | None) -> str | None:
+    if value is not None:
+        password_bytes(value)
+    return value
+
 
 class RegisterRequest(BaseModel):
     email: str
     password: str = Field(min_length=8, max_length=128)
     name: str = ""
     bootstrap_token: str | None = Field(default=None, max_length=256)
+
+    _password_bytes = field_validator("password")(_bounded_password)
 
     @field_validator("email")
     @classmethod
@@ -25,6 +35,8 @@ class LoginRequest(BaseModel):
     email: str = Field(default="", max_length=255)
     password: str | None = Field(default=None, max_length=128)
     bootstrap_token: str | None = Field(default=None, max_length=256)
+
+    _password_bytes = field_validator("password")(_bounded_password)
 
     @field_validator("name")
     @classmethod

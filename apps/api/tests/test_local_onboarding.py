@@ -4,6 +4,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -11,6 +12,7 @@ from sag_api.core.config import settings
 from sag_api.core.errors import ApiError, AuthError
 from sag_api.core.security import hash_password, verify_password
 from sag_api.db.models import User
+from sag_api.schemas.auth import LoginRequest, RegisterRequest
 from sag_api.services.auth_service import authenticate_or_register, register_user
 
 
@@ -101,6 +103,13 @@ async def test_password_mode_requires_bootstrap_then_password_without_renaming(
             password="correct horse",
         )
         await session.refresh(resumed)
+        with pytest.raises(AuthError, match="身份验证失败"):
+            await authenticate_or_register(
+                session,
+                name="Ada",
+                password="replacement password",
+                bootstrap_token="b" * 64,
+            )
 
         assert resumed.id == created.id
         assert resumed.name == "Ada"
@@ -334,7 +343,7 @@ async def test_password_mode_http_route_has_one_generic_failure_and_forwards_boo
             "/api/v1/auth/login",
             json={"name": "Ada", "password": "correct horse"},
         )
-        reset = await client.post(
+        replayed_bootstrap = await client.post(
             "/api/v1/auth/login",
             json={
                 "name": "Ada",
@@ -345,10 +354,6 @@ async def test_password_mode_http_route_has_one_generic_failure_and_forwards_boo
         old_password = await client.post(
             "/api/v1/auth/login",
             json={"name": "Ada", "password": "correct horse"},
-        )
-        replacement_password = await client.post(
-            "/api/v1/auth/login",
-            json={"name": "Ada", "password": "replacement password"},
         )
 
     expected_failure = {
@@ -366,9 +371,64 @@ async def test_password_mode_http_route_has_one_generic_failure_and_forwards_boo
     assert correct.status_code == 200
     assert correct.json()["user"]["id"] == initialized.json()["user"]["id"]
     assert correct.json()["user"]["name"] == "Ada"
-    assert reset.status_code == 200
-    assert old_password.status_code == 401
-    assert old_password.json() == expected_failure
-    assert replacement_password.status_code == 200
-    assert replacement_password.json()["user"]["id"] == initialized.json()["user"]["id"]
+    assert replayed_bootstrap.status_code == 401
+    assert replayed_bootstrap.json() == expected_failure
+    assert old_password.status_code == 200
+    assert old_password.json()["user"]["id"] == initialized.json()["user"]["id"]
+    await engine.dispose()
+
+
+@pytest.mark.parametrize("request_model", [LoginRequest, RegisterRequest])
+def test_auth_schema_rejects_passwords_over_72_utf8_bytes(request_model) -> None:
+    """Catches multibyte passwords reaching bcrypt after exceeding its byte boundary."""
+    payload = {"name": "Ada", "password": "密" * 25}
+    if request_model is RegisterRequest:
+        payload["email"] = "ada@example.com"
+    with pytest.raises(PydanticValidationError, match="72"):
+        request_model(**payload)
+
+
+@pytest.mark.asyncio
+async def test_password_mode_unicode_name_and_bootstrap_are_normalized_or_rejected_not_crashed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches compare_digest receiving non-ASCII str values and raising TypeError."""
+    monkeypatch.setitem(settings.__dict__, "auth_mode", "password")
+    monkeypatch.setitem(settings.__dict__, "auth_bootstrap_token", "a" * 64)
+    monkeypatch.setitem(settings.__dict__, "auth_password_min_length", 12)
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(User.__table__.create)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with sessions() as session:
+        with pytest.raises(AuthError, match="身份验证失败"):
+            await authenticate_or_register(
+                session,
+                name="艾达",
+                password="correct horse",
+                bootstrap_token="初始化密钥",
+            )
+        created = await authenticate_or_register(
+            session,
+            name="Ａda",
+            password="correct horse",
+            bootstrap_token="a" * 64,
+        )
+        assert created.name == "Ada"
+        assert (
+            await authenticate_or_register(
+                session,
+                name="Ada",
+                password="correct horse",
+            )
+        ).id == created.id
+        with pytest.raises(AuthError, match="身份验证失败"):
+            await authenticate_or_register(
+                session,
+                name="艾达",
+                password="correct horse",
+            )
+
     await engine.dispose()

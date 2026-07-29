@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from sag_api.connectors import registry
+from sag_api.core import security
 from sag_api.core.config import Settings, settings
 from sag_api.core.litellm_policy import (
     apply_litellm_completion_policy,
@@ -24,6 +25,47 @@ def test_password_hash_roundtrip():
     h = hash_password("password123")
     assert verify_password("password123", h)
     assert not verify_password("wrong", h)
+
+
+@pytest.mark.parametrize(
+    "password",
+    [
+        "x" * 73,
+        "密" * 25,
+    ],
+)
+def test_password_hash_rejects_inputs_over_72_utf8_bytes(password):
+    """Catches bcrypt silently treating distinct long passwords as the same prefix."""
+    with pytest.raises(ValueError, match="72"):
+        hash_password(password)
+    assert verify_password(password, hash_password("valid password")) is False
+
+
+@pytest.mark.asyncio
+async def test_async_password_primitives_leave_the_event_loop(monkeypatch):
+    """Catches CPU-heavy bcrypt hash/check running on the async request thread."""
+    import threading
+
+    event_loop_thread = threading.get_ident()
+    observed_threads = []
+    real_hash = security.hash_password
+    real_verify = security.verify_password
+
+    def observed_hash(password):
+        observed_threads.append(threading.get_ident())
+        return real_hash(password)
+
+    def observed_verify(password, password_hash):
+        observed_threads.append(threading.get_ident())
+        return real_verify(password, password_hash)
+
+    monkeypatch.setattr(security, "hash_password", observed_hash)
+    monkeypatch.setattr(security, "verify_password", observed_verify)
+
+    password_hash = await security.hash_password_async("valid password")
+    assert await security.verify_password_async("valid password", password_hash)
+    assert len(observed_threads) == 2
+    assert all(thread_id != event_loop_thread for thread_id in observed_threads)
 
 
 def test_connector_registry():

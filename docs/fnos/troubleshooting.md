@@ -73,10 +73,14 @@ docker ps -a --filter name=sag-
 docker logs --tail 200 sag-gateway
 docker logs --tail 200 sag-web
 docker logs --tail 200 sag-api
-docker inspect sag-api sag-web sag-gateway
+docker inspect --format \
+  '{{.Name}} image={{.Config.Image}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} restart={{.RestartCount}}{{range .Mounts}} mount={{.Destination}}:{{.Type}}:rw={{.RW}}{{end}}' \
+  sag-api sag-web sag-gateway
 ```
 
-不要直接把未经处理的完整日志贴到工单。先搜索并遮盖密钥、Bearer Token、Cookie、请求正文和用户文档内容。
+这个格式刻意不输出 `Config.Env` 或宿主机挂载源。不要改回无格式的原始
+`docker inspect`，也不要直接把未经处理的完整日志贴到工单。先搜索并遮盖密钥、
+Bearer Token、Cookie、请求正文和用户文档内容。
 
 ## Web 能开，但 API/SSE/MCP 失败
 
@@ -116,13 +120,32 @@ SAG_AUTH_BOOTSTRAP_TOKEN=<redacted>
 
 fnOS 登录失败统一返回“身份验证失败”，不会说明用户、密码还是 bootstrap 是否正确：
 
-- 首次安装或旧库升级后首次登录：原名字（新安装可自定）+ 至少 12 位密码 +
-  bootstrap；
+- 首次安装或旧库升级后首次登录：原名字（新安装可自定）+ 至少 12 位且 UTF-8
+  不超过 72 字节的密码 + bootstrap；
 - 日常登录：原名字 + 密码，bootstrap 留空；
-- 管理员重置：原名字 + 至少 12 位新密码 + bootstrap。
+- 初始化完成后再次提交 bootstrap：拒绝，不执行远程密码重置；
+- 管理员恢复：先通过 `appcenter-cli stop sag` 停服，再在 fnOS 本地维护上下文运行
+  `"${TRIM_APPDEST}/cmd/auth_reset" --confirm-local-reset`。成功后读取 `0600`
+  `sag.env` 中已轮换的 bootstrap，启动应用，并用原名字和新密码完成一次初始化。
 
-若浏览器仍持有升级前的有效 JWT，可以先正常使用，但应尽快在受控维护窗口退出并完成
-密码初始化。不要尝试历史隐式默认密码，也不要通过改名绕过认证。
+本地恢复会递增认证版本并使全部旧 JWT 失效；密码模式也拒绝缺少或版本不匹配的
+JWT。恢复命令要求应用已停止，不打印新 bootstrap；数据库失败时保留原密钥文件。
+不要尝试历史隐式默认密码，也不要通过改名绕过认证。
+
+网关按直接 TCP 对端地址对 `/api/v1/auth/login` 和 `/api/v1/auth/register` 采用
+`5 次/分钟、burst=3` 的限流，拒绝时返回 `429` 和 `Retry-After: 60`。它不信任
+客户端提供的 `X-Forwarded-For`；Windows/VMware NAT 或上游代理可能让多个真实
+客户端共享同一限流额度，这是刻意的保守策略。收到 429 时等待至少 60 秒，不要
+并行重试。
+
+## HTTP/TLS 边界
+
+内置 `http://<fnOS 地址>:3080` 不提供传输加密，只能用于可信、隔离的私有 LAN
+或受控 VPN。禁止在公共/共享 Wi-Fi 或其他不可信网络输入用户密码、bootstrap、
+模型密钥或 Bearer Token；任何不可信访问必须先通过已验收的外部 HTTPS 反向代理，
+否则保持端口不可达。浏览器在 HTTPS 下会给认证 Cookie 增加 `Secure`，但当前
+Bearer 客户端仍需 JavaScript 读取 Cookie，因而不能设置 `HttpOnly`；应把 XSS
+防护和 TLS 代理配置作为同一安全边界验收。
 
 ## 升级因空间不足中止
 

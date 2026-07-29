@@ -15,7 +15,7 @@ from sag_api.db.models import User
 from sag_api.generation import LLMClient
 from sag_api.jobs import JobQueue
 from sag_api.sag import EngineManager
-from sag_api.services.auth_service import get_user
+from sag_api.services.auth_service import get_user_for_token_payload
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -31,10 +31,9 @@ async def get_current_user(
         payload = decode_token(creds.credentials)
     except jwt.PyJWTError as e:
         raise AuthError("令牌无效或已过期") from e
-    user_id = payload.get("sub")
-    user = await get_user(session, user_id) if user_id else None
-    if user is None or not user.is_active:
-        raise AuthError("用户不存在或已停用")
+    user = await get_user_for_token_payload(session, payload)
+    if user is None:
+        raise AuthError("令牌无效或已过期")
     request.state.user = user
     return user
 
