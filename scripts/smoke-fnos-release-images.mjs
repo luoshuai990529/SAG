@@ -11,6 +11,39 @@ import { setTimeout as delay } from "node:timers/promises";
 const digest = "sha256:[a-f0-9]{64}";
 const apiReference = new RegExp(`^ghcr\\.io/luoshuai990529/sag-api@${digest}$`);
 const webReference = new RegExp(`^ghcr\\.io/luoshuai990529/sag-web@${digest}$`);
+const staticAssetProbe = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const nextRoot = "/app/.next";
+const buildId = path.join(nextRoot, "BUILD_ID");
+if (fs.existsSync(buildId)) {
+  const value = fs.readFileSync(buildId, "utf8");
+  if (!value.trim()) throw new Error("empty Next BUILD_ID");
+}
+const staticRoot = "/app/.next/static";
+function findAsset(directory) {
+  const entries = fs.readdirSync(directory, { withFileTypes: true })
+    .sort((left, right) => left.name.localeCompare(right.name));
+  for (const entry of entries) {
+    const candidate = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      const nested = findAsset(candidate);
+      if (nested) return nested;
+    } else if (entry.isFile() && (entry.name.endsWith(".js") || entry.name.endsWith(".css"))) {
+      return candidate;
+    }
+  }
+  return null;
+}
+const asset = findAsset(staticRoot);
+if (!asset) throw new Error("no regular JavaScript or CSS asset in Next static tree");
+const relative = path.relative(staticRoot, asset);
+const segments = relative.split(path.sep);
+if (!segments.length || segments.some((segment) => !segment || segment === "." || segment === "..")) {
+  throw new Error("unsafe Next static asset path");
+}
+process.stdout.write("/_next/static/" + segments.map(encodeURIComponent).join("/"));
+`;
 
 function fail(message) {
   throw new Error(`fnOS exact-digest smoke: ${message}`);
@@ -130,89 +163,6 @@ function requireHttpEnvelope(response, operation) {
   if (statusLines[0][1] !== response.status) fail(`${operation} header status must match curl HTTP status`);
 }
 
-function hasNextStaticAssetTag(html) {
-  const whitespace = (character) => character === " " || character === "\t" || character === "\r" || character === "\n";
-  let found = false;
-  for (let index = 0; index < html.length; index += 1) {
-    if (html.startsWith("<!--", index)) {
-      const close = html.indexOf("-->", index + 4);
-      if (close < 0) return false;
-      index = close + 2;
-      continue;
-    }
-    if (html.startsWith("--!>", index)) return false;
-    if (html[index] !== "<") continue;
-    let end = index + 1;
-    let quote = null;
-    for (; end < html.length; end += 1) {
-      const character = html[end];
-      if (quote) {
-        if (character === quote) quote = null;
-      } else if (character === "'" || character === "\"") {
-        quote = character;
-      } else if (character === ">") {
-        break;
-      }
-    }
-    if (end >= html.length || quote) return false;
-    let cursor = index + 1;
-    const closing = html[cursor] === "/";
-    if (closing) cursor += 1;
-    const nameStart = cursor;
-    while (cursor < end && !whitespace(html[cursor]) && html[cursor] !== "/") cursor += 1;
-    const name = html.slice(nameStart, cursor).toLowerCase();
-    if (closing || (name !== "script" && name !== "link")) {
-      index = end;
-      continue;
-    }
-    const attributes = [];
-    while (cursor < end) {
-      while (cursor < end && whitespace(html[cursor])) cursor += 1;
-      if (cursor >= end) break;
-      if (html[cursor] === "/") {
-        cursor += 1;
-        while (cursor < end && whitespace(html[cursor])) cursor += 1;
-        if (cursor !== end) return false;
-        break;
-      }
-      const start = cursor;
-      while (cursor < end && !whitespace(html[cursor]) && !["=", "/", "'", "\"", "<"].includes(html[cursor])) cursor += 1;
-      if (cursor === start) return false;
-      if (["'", "\"", "<"].includes(html[cursor])) return false;
-      const attributeName = html.slice(start, cursor).toLowerCase();
-      while (cursor < end && whitespace(html[cursor])) cursor += 1;
-      let value = null;
-      let quoted = false;
-      if (html[cursor] === "=") {
-        cursor += 1;
-        while (cursor < end && whitespace(html[cursor])) cursor += 1;
-        if (html[cursor] === "'" || html[cursor] === "\"") {
-          quoted = true;
-          const valueQuote = html[cursor++];
-          const valueStart = cursor;
-          while (cursor < end && html[cursor] !== valueQuote) cursor += 1;
-          if (cursor >= end) return false;
-          value = html.slice(valueStart, cursor++);
-        } else {
-          const valueStart = cursor;
-          while (cursor < end && !whitespace(html[cursor]) && !["/", "'", "\"", "<", "="].includes(html[cursor])) cursor += 1;
-          if (cursor === valueStart) return false;
-          value = html.slice(valueStart, cursor);
-          if (cursor < end && !whitespace(html[cursor]) && html[cursor] !== "/") return false;
-        }
-      }
-      attributes.push({ name: attributeName, value, quoted });
-    }
-    const relevantName = name === "script" ? "src" : "href";
-    const relevant = attributes.filter((attribute) => attribute.name === relevantName);
-    if (relevant.length === 1 && relevant[0].quoted && relevant[0].value.startsWith("/_next/static/")) {
-      found = true;
-    }
-    index = end;
-  }
-  return found;
-}
-
 async function requireApiReady(options, attempts = 30) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const response = captureHttp(options, "http://127.0.0.1:18001/api/v1/system/ready");
@@ -269,9 +219,55 @@ function requireWebLogin(options) {
     fail(`Web login Content-Type must be text/html, received ${contentTypes.join(", ") || "missing"}`);
   }
   const body = response.body.trim();
-  if (!/^<!doctype html>/i.test(body) || !hasNextStaticAssetTag(body)) {
-    fail("Web login must contain stable Next HTML markers");
+  if (!/^<!doctype html>/i.test(body)) fail("Web login body must begin with an HTML doctype");
+}
+
+function requireStaticAssetUrl(options) {
+  const resource = names(options);
+  const result = docker(
+    options,
+    ["exec", resource.web, "node", "-e", staticAssetProbe],
+    "Web static artifact inspection",
+  );
+  const output = result.stdout.endsWith("\n") ? result.stdout.slice(0, -1) : result.stdout;
+  if (!output || output.includes("\n") || output.includes("\r") || !output.startsWith("/_next/static/")) {
+    fail("Web artifact inspection must emit exactly one safe static asset URL");
   }
+  const encodedSegments = output.slice("/_next/static/".length).split("/");
+  let segments;
+  try {
+    segments = encodedSegments.map((segment) => decodeURIComponent(segment));
+  } catch {
+    fail("Web artifact inspection must emit exactly one safe static asset URL");
+  }
+  const safe = segments.length > 0 && segments.every((segment, index) => (
+    segment
+    && segment !== "."
+    && segment !== ".."
+    && !segment.includes("/")
+    && !segment.includes("\\")
+    && encodeURIComponent(segment) === encodedSegments[index]
+  ));
+  const extension = segments.at(-1)?.endsWith(".js") ? "js" : segments.at(-1)?.endsWith(".css") ? "css" : null;
+  if (!safe || !extension) fail("Web artifact inspection must emit exactly one safe static asset URL");
+  return { path: output, extension };
+}
+
+function requireWebStaticAsset(options, asset) {
+  const response = captureHttp(options, `http://127.0.0.1:13001${asset.path}`);
+  if (response.curlStatus !== 0) fail(`Web static asset request failed: ${response.curlError}`);
+  requireHttpEnvelope(response, "Web static asset");
+  if (response.status !== "200") fail(`Web static asset must return exact HTTP 200, received ${response.status}`);
+  const contentTypes = headerValues(response.headers, "Content-Type");
+  if (contentTypes.length !== 1) fail("Web static asset must return exactly one Content-Type header");
+  const expected = asset.extension === "js"
+    ? /^(?:application|text)\/javascript(?:;|$)/i
+    : /^text\/css(?:;|$)/i;
+  if (!expected.test(contentTypes[0])) {
+    const kind = asset.extension === "js" ? "JavaScript" : "CSS";
+    fail(`Web static asset must return a ${kind} Content-Type, received ${contentTypes[0]}`);
+  }
+  if (response.body.length === 0) fail("Web static asset body must be nonempty");
 }
 
 function loginStatus(options, body) {
@@ -327,6 +323,7 @@ async function smoke(options) {
     if (loginStatus(options, { name: "Digest Smoke Owner", password }) !== "200") fail("daily password login must return 200");
     requireWebRoot(options);
     requireWebLogin(options);
+    requireWebStaticAsset(options, requireStaticAssetUrl(options));
   } finally {
     cleanup(options);
   }

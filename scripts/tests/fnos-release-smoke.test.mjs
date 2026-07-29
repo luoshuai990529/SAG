@@ -19,6 +19,10 @@ async function fakeTools(t, {
   readiness = {},
   rootResponse = {},
   loginResponse = {},
+  staticAssetOutput = "/_next/static/chunks/app.js\n",
+  staticAssetExitCode = 0,
+  staticAssetStderr = "",
+  assetResponse = {},
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-digest-smoke-"));
   t.after(async () => rm(root, { recursive: true, force: true }));
@@ -35,6 +39,11 @@ if (process.env.FAKE_DOCKER_FAIL && args.join(" ").includes(process.env.FAKE_DOC
 }
 if (args[0] === "volume" && args[1] === "create") process.stdout.write(args.at(-1) + "\\n");
 else if (args[0] === "run") process.stdout.write("container-id\\n");
+else if (args[0] === "exec") {
+  process.stdout.write(process.env.FAKE_STATIC_ASSET_OUTPUT);
+  process.stderr.write(process.env.FAKE_STATIC_ASSET_STDERR);
+  process.exit(Number(process.env.FAKE_STATIC_ASSET_EXIT_CODE));
+}
 process.exit(0);
 `);
   await writeFile(curl, `#!/usr/bin/env node
@@ -50,7 +59,9 @@ if (dataIndex >= 0) {
   const url = args.at(-1);
   const response = url.endsWith("/api/v1/system/ready")
     ? responses.readiness
-    : url.endsWith("/login") ? responses.login : responses.root;
+    : url.endsWith("/login") ? responses.login
+      : url.includes("/_next/static/") ? responses.asset
+        : responses.root;
   const outputIndex = args.indexOf("--output");
   const headerIndex = args.indexOf("--dump-header");
   if (outputIndex >= 0) fs.writeFileSync(args[outputIndex + 1], response.body);
@@ -73,6 +84,9 @@ process.exit(0);
       FAKE_CURL_LOG: curlLog,
       FAKE_NAME_ONLY_STATUS: nameOnlyStatus,
       FAKE_DOCKER_FAIL: dockerFail,
+      FAKE_STATIC_ASSET_OUTPUT: staticAssetOutput,
+      FAKE_STATIC_ASSET_EXIT_CODE: String(staticAssetExitCode),
+      FAKE_STATIC_ASSET_STDERR: staticAssetStderr,
       FAKE_HTTP_RESPONSES: JSON.stringify({
         readiness: {
           status: 200,
@@ -93,10 +107,18 @@ process.exit(0);
         login: {
           status: 200,
           headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n",
-          body: '<!DOCTYPE html><html><head><link href="/_next/static/css/app.css"></head><body>SAG</body></html>',
+          body: "<!DOCTYPE html><html><body>SAG</body></html>",
           exitCode: 0,
           stderr: "",
           ...loginResponse,
+        },
+        asset: {
+          status: 200,
+          headers: "HTTP/1.1 200 OK\r\nContent-Type: application/javascript; charset=utf-8\r\n\r\n",
+          body: "console.log('SAG');",
+          exitCode: 0,
+          stderr: "",
+          ...assetResponse,
         },
       }),
       TMPDIR: root,
@@ -144,11 +166,18 @@ test("smokes only the captured API/Web digest references with ephemeral password
   assert.match(bootstrap ?? "", /^[a-f0-9]{64}$/);
   assert.notEqual(secret, bootstrap);
   assert.doesNotMatch(JSON.stringify(dockerCalls), /staging-fnos|sag-api-smoke|sag-web-smoke|buildx|build-push/);
+  const execCalls = dockerCalls.filter(([command]) => command === "exec");
+  assert.equal(execCalls.length, 1);
+  assert.deepEqual(execCalls[0].slice(0, 4), ["exec", "sag-fnos-web-test-123", "node", "-e"]);
+  assert.equal(execCalls[0].length, 5);
+  assert.match(execCalls[0][4], /\/app\/\.next\/static/);
+  assert.doesNotMatch(execCalls[0][4], /\b(?:sh|bash)\b/);
 
   const curlCalls = await jsonLines(tools.curlLog);
   assert.ok(curlCalls.some((args) => args.at(-1).endsWith("/api/v1/system/ready")));
   assert.ok(curlCalls.some((args) => args.at(-1).endsWith("/")));
   assert.ok(curlCalls.some((args) => args.at(-1).endsWith("/login")));
+  assert.ok(curlCalls.some((args) => args.at(-1) === "http://127.0.0.1:13001/_next/static/chunks/app.js"));
   assert.ok(curlCalls.filter((args) => !args.includes("--data")).every(
     (args) => args.includes("--dump-header") && !args.includes("--location"),
   ));
@@ -212,32 +241,8 @@ for (const [name, rootResponse, message] of [
 for (const [name, loginResponse, message] of [
   ["redirect", { status: 307, headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login\r\n\r\n", body: "" }, /Web login.*HTTP 200/i],
   ["wrong content type", { headers: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" }, /Content-Type.*text\/html/i],
-  ["arbitrary body", { body: "<html><body>OK</body></html>" }, /Next.*HTML markers/i],
-  ["empty body", { body: "" }, /Next.*HTML markers/i],
-  ["marker in comment", { body: '<!doctype html><!-- <script src="/_next/static/x.js"></script> --><html><body>SAG</body></html>' }, /Next.*HTML markers/i],
-  ["marker in unterminated comment", { body: '<!doctype html><!-- <script src="/_next/static/x.js"></script><html></html>' }, /Next.*HTML markers/i],
-  ["marker in malformed comment close", { body: '<!doctype html><!-- <script src="/_next/static/x.js"></script> --!><html></html>' }, /Next.*HTML markers/i],
-  ["comment spliced into asset path", { body: '<!doctype html><script src="/_next/sta<!--x-->tic/x.js"></script>' }, /Next.*HTML markers/i],
-  ["comment spliced into tag name", { body: '<!doctype html><scr<!--x-->ipt src="/_next/static/x.js"></script>' }, /Next.*HTML markers/i],
-  ["marker as text", { body: "<!doctype html><html><body>/_next/static/x.js</body></html>" }, /Next.*HTML markers/i],
-  ["script-widget tag", { body: '<!doctype html><script-widget src="/_next/static/x.js"></script-widget>' }, /Next.*HTML markers/i],
-  ["link-widget tag", { body: '<!doctype html><link-widget href="/_next/static/x.css">' }, /Next.*HTML markers/i],
-  ["script href", { body: '<!doctype html><script href="/_next/static/x.js"></script>' }, /Next.*HTML markers/i],
-  ["link src", { body: '<!doctype html><link src="/_next/static/x.css">' }, /Next.*HTML markers/i],
-  ["data-src", { body: '<!doctype html><script data-src="/_next/static/x.js"></script>' }, /Next.*HTML markers/i],
-  ["data-href", { body: '<!doctype html><link data-href="/_next/static/x.css">' }, /Next.*HTML markers/i],
-  ["uppercase path", { body: '<!doctype html><script src="/_NEXT/static/x.js"></script>' }, /Next.*HTML markers/i],
-  ["duplicate src nonnext then next", { body: '<!doctype html><script src="/other.js" src="/_next/static/x.js"></script>' }, /Next.*HTML markers/i],
-  ["duplicate src next then nonnext", { body: '<!doctype html><script src="/_next/static/x.js" src="/other.js"></script>' }, /Next.*HTML markers/i],
-  ["mixed-case duplicate href", { body: '<!doctype html><link HREF="/other.css" href="/_next/static/x.css">' }, /Next.*HTML markers/i],
-  ["boolean SRC plus real src", { body: '<!doctype html><script SRC src="/_next/static/x.js"></script>' }, /Next.*HTML markers/i],
-  ["unquoted src", { body: '<!doctype html><script src=/_next/static/x.js></script>' }, /Next.*HTML markers/i],
-  ["unclosed relevant quote", { body: '<!doctype html><script src="/_next/static/x.js></script>' }, /Next.*HTML markers/i],
-  ["unclosed tag", { body: '<!doctype html><script src="/_next/static/x.js"' }, /Next.*HTML markers/i],
-  ["fake script inside div attribute", { body: '<!doctype html><div data-x=\'<script src="/_next/static/fake.js"></script>\'></div>' }, /Next.*HTML markers/i],
-  ["fake script inside style attribute", { body: '<!doctype html><style data-x=\'<script src="/_next/static/fake.js"></script>\'></style>' }, /Next.*HTML markers/i],
-  ["fake link inside meta attribute", { body: '<!doctype html><meta content=\'<link href="/_next/static/fake.css">\'>' }, /Next.*HTML markers/i],
-  ["fake script inside custom attribute", { body: '<!doctype html><x-widget value=\'<script src="/_next/static/fake.js"></script>\'></x-widget>' }, /Next.*HTML markers/i],
+  ["missing doctype", { body: "<html><body>OK</body></html>" }, /doctype/i],
+  ["empty body", { body: "" }, /doctype/i],
   ["missing Content-Type", { headers: "HTTP/1.1 200 OK\r\n\r\n" }, /Content-Type.*text\/html/i],
   ["duplicate Content-Type", { headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Type: text/html\r\n\r\n" }, /Content-Type.*text\/html/i],
   ["curl exit", { exitCode: 7, stderr: "connection refused" }, /Web login request failed/i],
@@ -250,53 +255,58 @@ for (const [name, loginResponse, message] of [
   });
 }
 
-test("accepts a real quoted Next script marker with CRLF headers", async (t) => {
-  const tools = await fakeTools(t, {
-    loginResponse: {
-      headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n",
-      body: '<!doctype html><html><body><script defer src="/_next/static/chunks/app.js"></script></body></html>',
-    },
-  });
-  assert.equal(invoke(tools).status, 0);
-});
-
-test("accepts quoted greater-than text in an unrelated attribute", async (t) => {
-  const tools = await fakeTools(t, {
-    loginResponse: {
-      body: '<!doctype html><script data-note="a > b" src="/_next/static/chunks/app.js"></script>',
-    },
-  });
-  assert.equal(invoke(tools).status, 0);
-});
-
-test("ignores attribute-looking text inside another quoted value", async (t) => {
-  const tools = await fakeTools(t, {
-    loginResponse: {
-      body: '<!doctype html><script data-x=\'src="/other.js"\' src="/_next/static/chunks/app.js"></script>',
-    },
-  });
-  assert.equal(invoke(tools).status, 0);
-});
-
-test("skips a complete top-level comment and accepts a later real Next tag", async (t) => {
-  const tools = await fakeTools(t, {
-    loginResponse: {
-      body: '<!doctype html><!-- <script src="/_next/static/fake.js"></script> --><script src="/_next/static/real.js"></script>',
-    },
-  });
-  assert.equal(invoke(tools).status, 0);
-});
-
-for (const [name, body] of [
-  ["unmatched comment bytes inside an attribute", '<!doctype html><div data-x="<!--"><script src="/_next/static/real.js"></script>'],
-  ["complete comment bytes inside an attribute", '<!doctype html><div data-x="<!--x-->"><script src="/_next/static/real.js"></script>'],
-  ["a normal outer tag before the marker", '<!doctype html><main class="shell"><script src="/_next/static/real.js"></script></main>'],
+for (const [name, options, message] of [
+  ["missing static tree", { staticAssetExitCode: 1, staticAssetStderr: "static tree missing\n" }, /static artifact inspection failed/i],
+  ["empty static tree", { staticAssetExitCode: 1, staticAssetStderr: "no static asset\n" }, /static artifact inspection failed/i],
+  ["nonzero artifact inspection", { staticAssetExitCode: 9, staticAssetStderr: "injected exec failure\n" }, /static artifact inspection failed/i],
+  ["traversal artifact path", { staticAssetOutput: "/_next/static/../server.js\n" }, /safe static asset URL/i],
+  ["encoded traversal artifact path", { staticAssetOutput: "/_next/static/%2e%2e/server.js\n" }, /safe static asset URL/i],
+  ["multiple artifact paths", { staticAssetOutput: "/_next/static/a.js\n/_next/static/b.js\n" }, /safe static asset URL/i],
+  ["artifact path with carriage return", { staticAssetOutput: "/_next/static/a.js\r\n" }, /safe static asset URL/i],
+  ["asset HTTP 404", {
+    assetResponse: { status: 404, headers: "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n", body: "missing" },
+  }, /static asset.*HTTP 200/i],
+  ["asset redirect", {
+    assetResponse: { status: 307, headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login\r\n\r\n", body: "" },
+  }, /static asset.*HTTP 200/i],
+  ["asset wrong content type", {
+    assetResponse: { headers: "HTTP/1.1 200 OK\r\nContent-Type: text/css\r\n\r\n" },
+  }, /JavaScript Content-Type/i],
+  ["asset duplicate content type", {
+    assetResponse: { headers: "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\nContent-Type: application/javascript\r\n\r\n" },
+  }, /exactly one.*Content-Type/i],
+  ["empty asset body", { assetResponse: { body: "" } }, /static asset body.*nonempty/i],
+  ["asset curl failure", {
+    assetResponse: { exitCode: 7, stderr: "connection refused", body: "" },
+  }, /static asset request failed/i],
 ]) {
-  test(`accepts ${name} before a real top-level Next marker`, async (t) => {
-    const tools = await fakeTools(t, { loginResponse: { body } });
-    assert.equal(invoke(tools).status, 0);
+  test(`rejects ${name} and cleans smoke resources`, async (t) => {
+    const tools = await fakeTools(t, options);
+    const result = invoke(tools);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, message);
+    const dockerCalls = await jsonLines(tools.dockerLog);
+    assert.ok(dockerCalls.some((args) => args[0] === "rm"));
+    assert.ok(dockerCalls.some((args) => args[0] === "volume" && args[1] === "rm"));
   });
 }
+
+test("accepts a real JavaScript artifact owned by the exact Web digest", async (t) => {
+  const tools = await fakeTools(t);
+  assert.equal(invoke(tools).status, 0);
+});
+
+test("accepts a real CSS artifact owned by the exact Web digest", async (t) => {
+  const tools = await fakeTools(t, {
+    staticAssetOutput: "/_next/static/css/app.css\n",
+    assetResponse: {
+      headers: "HTTP/1.1 200 OK\r\nContent-Type: text/css; charset=utf-8\r\n\r\n",
+      body: "body{color:#111}",
+    },
+  });
+  const result = invoke(tools);
+  assert.equal(result.status, 0, result.stderr);
+});
 
 test("fails closed when an exact digest pull fails and still attempts cleanup", async (t) => {
   const tools = await fakeTools(t, { dockerFail: `pull --platform linux/amd64 ${apiImage}` });
