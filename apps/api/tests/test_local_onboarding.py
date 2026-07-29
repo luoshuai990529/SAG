@@ -151,9 +151,28 @@ async def test_password_mode_upgrades_existing_passwordless_user_only_with_priva
                     password="new secure password",
                     bootstrap_token=bootstrap_token,
                 )
+        with pytest.raises(AuthError, match="身份验证失败"):
+            await authenticate_or_register(
+                session,
+                name="Attacker",
+                password="new secure password",
+                bootstrap_token="c" * 64,
+            )
+        legacy.is_active = False
+        await session.commit()
+        with pytest.raises(AuthError, match="身份验证失败"):
+            await authenticate_or_register(
+                session,
+                name="Legacy",
+                password="new secure password",
+                bootstrap_token="c" * 64,
+            )
+        legacy.is_active = True
+        await session.commit()
         await session.refresh(legacy)
         assert legacy.password_hash == legacy_hash
         assert legacy.password_initialized is False
+        assert legacy.auth_version == 0
 
         upgraded = await authenticate_or_register(
             session,
@@ -182,6 +201,8 @@ async def test_password_mode_register_requires_bootstrap_and_hides_existing_user
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Catches the legacy /register route bypassing the production bootstrap gate."""
+    from sag_api.services import auth_service
+
     monkeypatch.setitem(settings.__dict__, "auth_mode", "password")
     monkeypatch.setitem(settings.__dict__, "auth_bootstrap_token", "d" * 64)
     monkeypatch.setitem(settings.__dict__, "auth_password_min_length", 12)
@@ -208,6 +229,16 @@ async def test_password_mode_register_requires_bootstrap_and_hides_existing_user
         )
         assert created.password_initialized is True
 
+        dummy_checks: list[str] = []
+
+        async def record_dummy_check(password: str) -> None:
+            dummy_checks.append(password)
+
+        monkeypatch.setattr(
+            auth_service,
+            "consume_dummy_password_check",
+            record_dummy_check,
+        )
         for email in ("owner@example.com", "attacker@example.com"):
             with pytest.raises(AuthError, match="身份验证失败"):
                 await register_user(
@@ -217,6 +248,7 @@ async def test_password_mode_register_requires_bootstrap_and_hides_existing_user
                     name="Attacker",
                     bootstrap_token="d" * 64,
                 )
+        assert dummy_checks == ["another secure password", "another secure password"]
 
     await engine.dispose()
 
@@ -386,6 +418,43 @@ def test_auth_schema_rejects_passwords_over_72_utf8_bytes(request_model) -> None
         payload["email"] = "ada@example.com"
     with pytest.raises(PydanticValidationError, match="72"):
         request_model(**payload)
+
+
+@pytest.mark.asyncio
+async def test_auth_request_validation_never_echoes_password_or_bootstrap(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Catches FastAPI's default 422 body echoing invalid authentication inputs."""
+    from sag_api.main import create_app
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    password = "p" * 73
+    bootstrap = "b" * 257
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={"name": "Ada", "password": password},
+        )
+        register = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "ada@example.com",
+                "name": "Ada",
+                "password": "correct horse",
+                "bootstrap_token": bootstrap,
+            },
+        )
+
+    expected = {"error": {"code": "unauthorized", "message": "身份验证失败"}}
+    assert login.status_code == 401
+    assert register.status_code == 401
+    assert login.json() == expected
+    assert register.json() == expected
+    observable = f"{login.text}\n{register.text}\n{caplog.text}"
+    assert password not in observable
+    assert bootstrap not in observable
 
 
 @pytest.mark.asyncio

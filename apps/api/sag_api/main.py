@@ -7,6 +7,8 @@ import os
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -180,6 +182,26 @@ def create_app() -> FastAPI:
             status_code=exc.status_code,
             content={"error": {"code": exc.code, "message": exc.message}},
         )
+
+    @app.exception_handler(RequestValidationError)
+    async def _handle_request_validation(
+        request: Request,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        if request.url.path in {
+            "/api/v1/auth/login",
+            "/api/v1/auth/register",
+        }:
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": {
+                        "code": "unauthorized",
+                        "message": "身份验证失败",
+                    }
+                },
+            )
+        return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(Exception)
     async def _handle_unexpected(_request: Request, exc: Exception) -> JSONResponse:

@@ -38,7 +38,35 @@ async function lifecycleFixture(t, overrides = {}) {
 printf 'docker %s\\n' "$*" >> "$FAKE_COMMAND_LOG"
 if [ "\${1:-}" = inspect ]; then
   case "\${3:-}" in
-    *State.Status*) printf '%s\\n' "\${FAKE_GATEWAY_STATE:-running}" ;;
+    *State.Status*)
+      if [ "\${4:-}" = sag-gateway ]; then
+        printf '%s\\n' "\${FAKE_GATEWAY_STATE:-running}"
+      else
+        count=0
+        if [ -f "$FAKE_AUTH_INSPECT_COUNT_FILE" ]; then
+          count="$(/bin/cat "$FAKE_AUTH_INSPECT_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s\\n' "$count" > "$FAKE_AUTH_INSPECT_COUNT_FILE"
+        if [ "\${FAKE_AUTH_INSPECT_EXIT_ON:-0}" -eq "$count" ]; then
+          exit "\${FAKE_AUTH_INSPECT_EXIT:-7}"
+        fi
+        sequence="\${FAKE_AUTH_INSPECT_SEQUENCE:-\${FAKE_AUTH_CONTAINER_STATE:-exited}}"
+        state=''
+        item_number=0
+        previous_ifs="$IFS"
+        IFS=,
+        for candidate_state in $sequence; do
+          item_number=$((item_number + 1))
+          state="$candidate_state"
+          if [ "$item_number" -eq "$count" ]; then
+            break
+          fi
+        done
+        IFS="$previous_ifs"
+        printf '%s\\n' "$state"
+      fi
+      ;;
     *State.Health.Status*) printf '%s\\n' "\${FAKE_GATEWAY_HEALTH:-healthy}" ;;
     *) exit 2 ;;
   esac
@@ -47,6 +75,11 @@ if [ "\${1:-}" = compose ] && [ "\${4:-}" = stop ]; then
   exit "\${FAKE_DOCKER_STOP_EXIT:-0}"
 fi
 if [ "\${1:-}" = compose ] && [ "\${4:-}" = ps ]; then
+  if [ "\${5:-}" = -aq ]; then
+    [ "\${FAKE_AUTH_PS_EXIT:-0}" -eq 0 ] || exit "$FAKE_AUTH_PS_EXIT"
+    printf '%s\\n' "\${FAKE_AUTH_CONTAINER_IDS-auth-container-id}"
+    exit 0
+  fi
   printf '%s\\n' "\${FAKE_COMPOSE_RUNNING_IDS-container-id}"
   exit "\${FAKE_DOCKER_PS_EXIT:-0}"
 fi
@@ -75,6 +108,9 @@ case "$*" in
     exit 0
     ;;
   *SAG_LIFECYCLE_ACTION=auth-reset*)
+    if [ "\${FAKE_HELPER_AUTH_RESET_KILL_PARENT:-0}" -eq 1 ]; then
+      kill -KILL "$PPID"
+    fi
     exit "\${FAKE_HELPER_AUTH_RESET_EXIT:-0}"
     ;;
 esac
@@ -102,6 +138,14 @@ case "$*" in
   *sag.env.tmp.*|*sag.env.reset.*) if [ "\${FAKE_CHMOD_EXIT:-0}" -ne 0 ]; then exit "$FAKE_CHMOD_EXIT"; fi ;;
 esac
 exec /bin/chmod "$@"
+  `);
+  await writeCommand(binDir, "mv", `
+case "$*" in
+  *sag.env.reset.*)
+    [ "\${FAKE_AUTH_MV_EXIT:-0}" -eq 0 ] || exit "$FAKE_AUTH_MV_EXIT"
+    ;;
+esac
+exec /bin/mv "$@"
   `);
   await writeCommand(binDir, "tar", `
 printf 'tar %s\\n' "$*" >> "$FAKE_COMMAND_LOG"
@@ -132,6 +176,7 @@ done
       TRIM_SERVICE_PORT: "3080",
       TRIM_TEMP_LOGFILE: tempLog,
       FAKE_COMMAND_LOG: commandLog,
+      FAKE_AUTH_INSPECT_COUNT_FILE: path.join(root, "auth-inspect-count"),
       FAKE_BACKUP_DIR: path.join(pkgVar, "backup"),
       FAKE_DATA_DIR: path.join(pkgVar, "data"),
       ...overrides,
@@ -313,8 +358,12 @@ test("container lifecycle helper refuses ambiguous users without changing any ro
   assert.equal(queried.stdout.trim(), "[(1, 1, 3), (2, 1, 4)]");
 });
 
-test("local auth reset requires a stopped app and rotates only the bootstrap secret", async (t) => {
-  const fixture = await lifecycleFixture(t, { FAKE_COMPOSE_RUNNING_IDS: "" });
+test("local auth reset inspects every project container twice and rotates only the bootstrap secret", async (t) => {
+  const fixture = await lifecycleFixture(t, {
+    FAKE_COMPOSE_RUNNING_IDS: "",
+    FAKE_AUTH_CONTAINER_IDS: "auth-one\nauth-two",
+    FAKE_AUTH_INSPECT_SEQUENCE: "exited,created,exited,created",
+  });
   const installed = runScript("install_callback", fixture.env);
   assert.equal(installed.status, 0, installed.stderr);
   const envFile = path.join(fixture.pkgEtc, "sag.env");
@@ -335,6 +384,10 @@ test("local auth reset requires a stopped app and rotates only the bootstrap sec
   assert.notEqual(bootstrapAfter, sessionAfter);
   assert.equal((await stat(envFile)).mode & 0o777, 0o600);
   assert.match(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
+  const commands = await readFile(fixture.commandLog, "utf8");
+  assert.equal((commands.match(/docker compose .* ps -aq/g) || []).length, 2);
+  assert.equal((commands.match(/docker inspect .* auth-one/g) || []).length, 2);
+  assert.equal((commands.match(/docker inspect .* auth-two/g) || []).length, 2);
   const observable = [
     result.stdout,
     result.stderr,
@@ -344,8 +397,31 @@ test("local auth reset requires a stopped app and rotates only the bootstrap sec
   assert.doesNotMatch(observable, new RegExp(`${bootstrapBefore}|${bootstrapAfter}`));
 });
 
-test("local auth reset refuses a running app without rotating or touching the database", async (t) => {
-  const fixture = await lifecycleFixture(t);
+for (const unsafeState of ["running", "paused", "restarting", "removing", "dead"]) {
+  test(`local auth reset rejects a project container in ${unsafeState} state`, async (t) => {
+    const fixture = await lifecycleFixture(t, {
+      FAKE_COMPOSE_RUNNING_IDS: "",
+      FAKE_AUTH_CONTAINER_STATE: unsafeState,
+    });
+    const installed = runScript("install_callback", fixture.env);
+    assert.equal(installed.status, 0, installed.stderr);
+    const envFile = path.join(fixture.pkgEtc, "sag.env");
+    const before = await readFile(envFile, "utf8");
+
+    const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
+
+    assert.notEqual(result.status, 0);
+    assert.equal(await readFile(envFile, "utf8"), before);
+    assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
+    assert.match(await readFile(fixture.tempLog, "utf8"), /not definitively stopped/i);
+  });
+}
+
+test("local auth reset fails closed when a project container cannot be inspected", async (t) => {
+  const fixture = await lifecycleFixture(t, {
+    FAKE_COMPOSE_RUNNING_IDS: "",
+    FAKE_AUTH_INSPECT_EXIT_ON: "1",
+  });
   const installed = runScript("install_callback", fixture.env);
   assert.equal(installed.status, 0, installed.stderr);
   const envFile = path.join(fixture.pkgEtc, "sag.env");
@@ -356,13 +432,13 @@ test("local auth reset refuses a running app without rotating or touching the da
   assert.notEqual(result.status, 0);
   assert.equal(await readFile(envFile, "utf8"), before);
   assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
-  assert.match(await readFile(fixture.tempLog, "utf8"), /to be stopped/i);
+  assert.match(await readFile(fixture.tempLog, "utf8"), /could not inspect/i);
 });
 
-test("local auth reset preserves the old bootstrap when the database transaction fails", async (t) => {
+test("local auth reset rechecks stopped state immediately before credential mutation", async (t) => {
   const fixture = await lifecycleFixture(t, {
     FAKE_COMPOSE_RUNNING_IDS: "",
-    FAKE_HELPER_AUTH_RESET_EXIT: "7",
+    FAKE_AUTH_INSPECT_SEQUENCE: "exited,restarting",
   });
   const installed = runScript("install_callback", fixture.env);
   assert.equal(installed.status, 0, installed.stderr);
@@ -377,7 +453,77 @@ test("local auth reset preserves the old bootstrap when the database transaction
     (await readdir(fixture.pkgEtc)).filter((name) => name.startsWith("sag.env.reset.")),
     [],
   );
-  assert.match(await readFile(fixture.tempLog, "utf8"), /database reset failed/i);
+  assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
+});
+
+test("local auth reset leaves a rotated inactive recovery token when the database transaction fails", async (t) => {
+  const fixture = await lifecycleFixture(t, {
+    FAKE_COMPOSE_RUNNING_IDS: "",
+    FAKE_AUTH_CONTAINER_STATE: "exited",
+    FAKE_HELPER_AUTH_RESET_EXIT: "7",
+  });
+  const installed = runScript("install_callback", fixture.env);
+  assert.equal(installed.status, 0, installed.stderr);
+  const envFile = path.join(fixture.pkgEtc, "sag.env");
+  const before = await readFile(envFile, "utf8");
+
+  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
+
+  assert.notEqual(result.status, 0);
+  const after = await readFile(envFile, "utf8");
+  const [, sessionBefore, bootstrapBefore] = before.match(
+    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
+  );
+  const [, sessionAfter, bootstrapAfter] = after.match(
+    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
+  );
+  assert.equal(sessionAfter, sessionBefore);
+  assert.notEqual(bootstrapAfter, bootstrapBefore);
+  assert.deepEqual(
+    (await readdir(fixture.pkgEtc)).filter((name) => name.startsWith("sag.env.reset.")),
+    [],
+  );
+  assert.match(await readFile(fixture.tempLog, "utf8"), /new bootstrap remains inactive/i);
+});
+
+test("local auth reset crash after env publish cannot restore the old bootstrap", async (t) => {
+  const fixture = await lifecycleFixture(t, {
+    FAKE_COMPOSE_RUNNING_IDS: "",
+    FAKE_AUTH_CONTAINER_STATE: "exited",
+    FAKE_HELPER_AUTH_RESET_KILL_PARENT: "1",
+  });
+  const installed = runScript("install_callback", fixture.env);
+  assert.equal(installed.status, 0, installed.stderr);
+  const envFile = path.join(fixture.pkgEtc, "sag.env");
+  const before = await readFile(envFile, "utf8");
+  const [, , bootstrapBefore] = before.match(
+    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
+  );
+
+  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
+
+  assert.equal(result.signal, "SIGKILL");
+  const after = await readFile(envFile, "utf8");
+  assert.doesNotMatch(after, new RegExp(bootstrapBefore));
+  assert.equal((await stat(envFile)).mode & 0o777, 0o600);
+});
+
+test("local auth reset does not touch the database if env publication fails", async (t) => {
+  const fixture = await lifecycleFixture(t, {
+    FAKE_COMPOSE_RUNNING_IDS: "",
+    FAKE_AUTH_CONTAINER_STATE: "exited",
+    FAKE_AUTH_MV_EXIT: "9",
+  });
+  const installed = runScript("install_callback", fixture.env);
+  assert.equal(installed.status, 0, installed.stderr);
+  const envFile = path.join(fixture.pkgEtc, "sag.env");
+  const before = await readFile(envFile, "utf8");
+
+  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
+
+  assert.notEqual(result.status, 0);
+  assert.equal(await readFile(envFile, "utf8"), before);
+  assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
 });
 
 test("container lifecycle helper cleans partial archives and preserves symlink semantics", async (t) => {

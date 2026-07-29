@@ -108,6 +108,20 @@ async def test_upgrade_bootstrap_and_local_reset_revoke_all_older_password_token
                 headers={"Authorization": f"Bearer {first_password_token}"},
             )
         ).status_code == 401
+        old_bootstrap = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "name": "Legacy",
+                "password": "replacement password",
+                "bootstrap_token": "a" * 64,
+            },
+        )
+        assert old_bootstrap.status_code == 401
+        async with sessions() as session:
+            still_waiting = await session.get(User, legacy_id)
+            assert still_waiting is not None
+            assert still_waiting.password_initialized is False
+            assert still_waiting.auth_version == 2
         reset_initialized = await client.post(
             "/api/v1/auth/login",
             json={

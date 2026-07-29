@@ -226,7 +226,10 @@ node scripts/build-fnos-package.mjs \
 远程登录接口不会长期接受安装时的 bootstrap。遗忘密码时，在 fnOS 本机的私有
 维护会话中：
 
-1. `appcenter-cli stop sag`，确认 SAG 全部服务已停止；
+1. `appcenter-cli stop sag`。恢复命令会枚举该 Compose 项目的每个容器，并且只把
+   `created`、`exited` 视为安全；`running`、`paused`、`restarting`、`removing`、
+   `dead`、未知状态或任何枚举/检查失败都会闭锁退出。命令会在写入凭据前再次检查，
+   但仍应先由操作者确认全部服务已停止；
 2. 从应用运行信息取得准确的 `TRIM_APPDEST`、`TRIM_PKGVAR`、`TRIM_PKGETC` 和
    `TRIM_TEMP_LOGFILE`，不要猜测路径；
 3. 在具备 fnOS 应用维护权限且上述变量已设置的上下文运行
@@ -236,10 +239,18 @@ node scripts/build-fnos-package.mjs \
 5. `appcenter-cli start sag`，使用原名字、至少 12 位且 UTF-8 不超过 72 字节的
    新密码和新 bootstrap 完成一次初始化。
 
-恢复事务会先使数据库中的用户进入待初始化状态并递增认证版本，再原子发布新
-bootstrap，因此所有旧 JWT 都立即失效。数据库事务失败时原 `sag.env` 保持不变；
-若极少数情况下数据库已提交但密钥文件原子替换失败，应用必须继续停止，修复本地
-文件问题后重试，不能开放远程入口。
+恢复状态机固定为：
+
+1. 两次确认项目全部容器处于 `created`/`exited`，第二次紧邻首次凭据写入；
+2. 以 `0600` 临时文件保存新 bootstrap，并原子替换 `sag.env`，会话密钥不变；
+3. 通过离线 SQLite `BEGIN IMMEDIATE` 事务把唯一用户设为待初始化并递增认证版本；
+4. 事务提交后，新 bootstrap 才能与原名字和新密码一起使用，所有旧 JWT 均失效。
+
+在第 2 步前失败时数据库未变，旧 bootstrap 对已初始化用户仍然无效；第 2 步后
+崩溃或数据库事务失败时，用户仍为已初始化，新 bootstrap 尚未激活，旧 bootstrap
+已经不在活动配置中，因此二者都不能远程重置。保持应用停止并原样重跑命令即可；
+重试会再次轮换 bootstrap。只有命令成功后才启动应用。不得为了“恢复”而把旧
+bootstrap 写回 `sag.env`。
 
 也可以在 fnOS 设备 shell 使用官方 `appcenter-cli`：
 

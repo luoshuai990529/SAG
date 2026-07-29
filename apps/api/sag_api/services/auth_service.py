@@ -101,8 +101,11 @@ async def register_user(
         existing = await _first_user(session)
         valid_password = _valid_new_password(password)
         valid_bootstrap = _valid_bootstrap(bootstrap_token)
-        if existing is not None or not valid_bootstrap or not valid_password:
-            if existing is None and valid_password:
+        if existing is not None:
+            await consume_dummy_password_check(password)
+            raise AuthError(_AUTH_FAILURE)
+        if not valid_bootstrap or not valid_password:
+            if valid_password:
                 await consume_dummy_password_check(password)
             raise AuthError(_AUTH_FAILURE)
         user = User(
@@ -187,7 +190,12 @@ async def authenticate_or_register(
         name_matches = bool(name) and _same_text(name, user.name)
         valid_password = _valid_new_password(password)
         if not user.password_initialized:
-            if not _valid_bootstrap(bootstrap_token) or not valid_password:
+            if (
+                not name_matches
+                or not user.is_active
+                or not _valid_bootstrap(bootstrap_token)
+                or not valid_password
+            ):
                 if valid_password:
                     await consume_dummy_password_check(password or "")
                 raise AuthError(_AUTH_FAILURE)

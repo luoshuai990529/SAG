@@ -28,7 +28,7 @@
 | MAC-02 | `fnpack` 安装与校验 | 通过 | 1.2.3；SHA-256 `d40cb00896cb2a5d211357d255750ed0cbe7f2d141df671c2b717afb4e74bf77` | [Mac 准备](./mac-preparation.md) |
 | MAC-03 | 官方 hello-docker 本地 `fnpack build` | 通过 | 临时 `.fpk` SHA-256 `39c0090f2ca037c70af42c1197c1940329959722ceca2a914cdb291e90f61b87` | [Mac 准备](./mac-preparation.md) |
 | CODE-01 | API Ruff | 通过 | `uv run ruff check sag_api/ sag_agent/ tests/`：All checks passed | 命令摘要；截图不适用 |
-| CODE-02 | API pytest | 通过 | `uv run python -m pytest -q`：209 tests collected，本轮全量命令完成且无失败；认证相关聚焦回归 42 passed | 命令摘要；截图不适用 |
+| CODE-02 | API pytest | 通过 | `uv run python -m pytest -q`：210 passed；认证相关聚焦回归 43 passed | 命令摘要；截图不适用 |
 | CODE-03 | Web 单测 | 通过 | `npm run test:unit`：49 files、358 tests passed | 命令摘要；截图不适用 |
 | CODE-04 | Web 类型/Lint/生产构建 | 通过 | `tsc --noEmit`、ESLint 0 warning、Next.js 15.5.20 production build 均通过 | 命令摘要；截图不适用 |
 | PKG-01 | 发布 Compose 拒绝可变镜像、弱密钥和额外端口 | 通过 | CI 运行发布 Compose、包、生命周期与文档行为测试；以 CI 日志的具体测试清单为准，不维护易过期的合计数字 | 命令摘要；截图不适用 |
@@ -46,7 +46,7 @@
 | FPK-01 | hello-docker 安装、打开、启停、卸载 | 待执行 | fnOS 管理会话需要用户登录 | `docs/fnos/evidence/<date>/fpk-01/` |
 | FPK-02 | SAG 全新安装、桌面打开、无模型密钥启动 | 阻塞 | 依赖 PKG-05、NET-02 和 fnOS 登录 | `docs/fnos/evidence/<date>/fpk-02/` |
 | FPK-03 | 密码模式首次初始化与日常登录 | 待执行 | 一次性私有 bootstrap + ≥12 位且 UTF-8 ≤72 字节的密码创建首个用户；缺失/错误密码、仅名字、不同名字和改名均以相同错误拒绝；正确名字+密码成功；初始化后 bootstrap 重放及第二次公开注册被拒绝。证据不得包含 bootstrap、密码或 `sag.env` 内容 | `docs/fnos/evidence/<date>/fpk-03/` |
-| FPK-04 | 本地管理员认证恢复 | 待执行 | 应用运行时拒绝恢复；停服后 `cmd/auth_reset --confirm-local-reset` 轮换 bootstrap 且不输出密钥、使旧 JWT 失效、保留原名字；原名字+新密码+新 bootstrap 仅可初始化一次 | `docs/fnos/evidence/<date>/fpk-04/` |
+| FPK-04 | 本地管理员认证恢复 | 待执行 | 两次枚举并检查全部项目容器，仅 `created`/`exited` 可继续；先原子发布 `0600` 新 bootstrap，再提交数据库 reset。检查竞态、发布失败、发布后崩溃和 DB 失败均可安全重试且旧 bootstrap 不会重新有效；成功后旧 JWT 失效，只有原名字+新密码+新 bootstrap 可初始化一次，错误名字/停用用户拒绝 | `docs/fnos/evidence/<date>/fpk-04/` |
 | NET-03 | HTTP/TLS 信任边界 | 待执行 | `:3080` 仅在可信隔离 LAN/受控 VPN 使用；公共/共享 Wi-Fi 禁止输入任何凭据。任何不可信访问以外部 HTTPS 反向代理验收为前置门禁；HTTPS 下 Cookie 有 Secure，当前 Bearer 架构不支持 HttpOnly | `docs/fnos/evidence/<date>/net-03/` |
 | BIZ-01 | Markdown/PDF 上传、抽取、索引、检索 | 待执行 | 凭据私下录入且不进入证据 | `docs/fnos/evidence/<date>/biz-01/` |
 | BIZ-02 | SSE 流式问答和引用打开 | 待执行 | 浏览器请求保持 `:3080` 同源，无 CORS/SSE 中断 | `docs/fnos/evidence/<date>/biz-02/` |

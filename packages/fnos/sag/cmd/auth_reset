@@ -108,14 +108,31 @@ if ! valid_hex_secret "${session_secret}" ||
     exit 1
 fi
 
-running_ids="$(docker compose -f "${compose_file}" ps --status running -q 2>> "${TRIM_TEMP_LOGFILE}")" || {
-    log_error "SAG auth recovery could not determine application state."
-    exit 1
+require_project_stopped() {
+    container_ids="$(docker compose -f "${compose_file}" ps -aq 2>> "${TRIM_TEMP_LOGFILE}")" || {
+        log_error "SAG auth recovery could not enumerate every project container."
+        return 1
+    }
+    unsafe=0
+    for container_id in ${container_ids}; do
+        container_state=""
+        if ! container_state="$(docker inspect --format '{{.State.Status}}' "${container_id}" 2>> "${TRIM_TEMP_LOGFILE}")"; then
+            log_error "SAG auth recovery could not inspect a project container; refusing to continue."
+            unsafe=1
+            continue
+        fi
+        case "${container_state}" in
+            created|exited) ;;
+            *)
+                log_error "SAG auth recovery found a project container that is not definitively stopped."
+                unsafe=1
+                ;;
+        esac
+    done
+    [ "${unsafe}" -eq 0 ]
 }
-if [ -n "${running_ids}" ]; then
-    log_error "SAG auth recovery requires the application to be stopped."
-    exit 1
-fi
+
+require_project_stopped || exit 1
 
 new_bootstrap="$(generate_secret)" || {
     log_error "SAG auth recovery could not generate a new bootstrap credential."
@@ -125,6 +142,10 @@ if [ "${new_bootstrap}" = "${session_secret}" ] || [ "${new_bootstrap}" = "${boo
     log_error "SAG auth recovery generated a duplicate credential; retry the operation."
     exit 1
 fi
+
+# Close the state-check race as far as the fnOS callback interface permits.
+# Everything before this second check is read-only or in-memory.
+require_project_stopped || exit 1
 
 secret_temp="${secret_file}.reset.$$"
 trap 'rm -f -- "${secret_temp}"' EXIT HUP INT TERM
@@ -138,19 +159,18 @@ if ! chmod 600 "${secret_temp}"; then
     exit 1
 fi
 
-if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
-    -e SAG_LIFECYCLE_ACTION=auth-reset lifecycle-auth-reset /opt/sag-lifecycle.py \
-    >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
-    log_error "SAG auth recovery database reset failed; the existing credential was preserved."
+if ! mv -- "${secret_temp}" "${secret_file}"; then
+    log_error "SAG auth recovery could not atomically publish the rotated credential; the database was not changed."
     exit 1
 fi
 
-if ! mv -- "${secret_temp}" "${secret_file}"; then
-    log_error "SAG auth recovery revoked sessions but could not publish the new credential; retry while the app remains stopped."
-    exit 1
-fi
-if ! chmod 600 "${secret_file}"; then
-    log_error "SAG auth recovery published the new credential but could not confirm private permissions."
+# The active env now contains only the new bootstrap. Until the transaction
+# below commits the initialized user rejects it, so a crash is safely retryable
+# and can never reactivate the old bootstrap.
+if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
+    -e SAG_LIFECYCLE_ACTION=auth-reset lifecycle-auth-reset /opt/sag-lifecycle.py \
+    >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
+    log_error "SAG auth recovery database reset failed; the new bootstrap remains inactive. Retry while the app remains stopped."
     exit 1
 fi
 

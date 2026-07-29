@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -30,4 +31,36 @@ test("source and packaged gateways apply conservative per-peer auth throttling",
   );
   assert.doesNotMatch(source, /limit_req_zone\s+\$http_x_forwarded_for/);
   assert.doesNotMatch(source, /set_real_ip_from|real_ip_header/);
+});
+
+test("locally cached release Nginx accepts the packaged gateway config", (t) => {
+  const image = "nginx:1.27-alpine";
+  const available = spawnSync("docker", ["image", "inspect", image], {
+    encoding: "utf8",
+  });
+  if (available.status !== 0) {
+    t.skip("release Nginx image is not cached locally");
+    return;
+  }
+
+  const checked = spawnSync(
+    "docker",
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--add-host",
+      "api:127.0.0.1",
+      "--add-host",
+      "web:127.0.0.1",
+      "--volume",
+      `${packageConfig}:/etc/nginx/conf.d/default.conf:ro`,
+      image,
+      "nginx",
+      "-t",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(checked.status, 0, `${checked.stdout}\n${checked.stderr}`);
 });
