@@ -8,6 +8,7 @@ const defaultCompose = "packages/fnos/sag/docker-compose.yml";
 const composePath = path.resolve(process.cwd(), process.argv[2] || defaultCompose);
 const immutableDigest = /@sha256:[a-f0-9]{64}$/i;
 const requiredSecretReference = /^\$\{SAG_SECRET_KEY:?\?[^}]*\}$/;
+const requiredBootstrapReference = /^\$\{SAG_AUTH_BOOTSTRAP_TOKEN:?\?[^}]*\}$/;
 const fnosSecretEnvFile = "${TRIM_PKGETC}/sag.env";
 
 function fail(messages) {
@@ -70,6 +71,18 @@ function validateApiSecret(api, errors) {
   }
 }
 
+function validateApiAuth(api, errors) {
+  if (api.environment?.SAG_AUTH_MODE !== "password") {
+    errors.push("api must set SAG_AUTH_MODE=password for LAN-reachable production releases");
+  }
+  const bootstrap = api.environment?.SAG_AUTH_BOOTSTRAP_TOKEN;
+  if (typeof bootstrap === "string" && requiredBootstrapReference.test(bootstrap)) return;
+  if (bootstrap === undefined && hasFnosSecretEnvFile(api)) return;
+  errors.push(
+    "api must use a required SAG_AUTH_BOOTSTRAP_TOKEN reference or the required fnOS sag.env",
+  );
+}
+
 function validateNoHostPorts(name, service, errors) {
   if (Array.isArray(service.ports) && service.ports.length > 0) {
     errors.push(`${name} must not publish host ports in a release Compose file`);
@@ -96,7 +109,10 @@ function validate(compose) {
     }
     validateNoHostPorts(name, services[name], errors);
   }
-  if (services.api && typeof services.api === "object") validateApiSecret(services.api, errors);
+  if (services.api && typeof services.api === "object") {
+    validateApiSecret(services.api, errors);
+    validateApiAuth(services.api, errors);
+  }
   return errors;
 }
 

@@ -1,6 +1,8 @@
 # fnOS 验收证据目录
 
-仓库只保存脱敏、可公开的验收证据。模型密钥、Authorization、Cookie、用户文档正文、`sag.env`、`sag.db`、完整 `/data`、备份归档及其下载链接不得进入本目录。备份即使已加密也不属于验收证据。
+仓库只保存脱敏、可公开的验收证据。模型密钥、Authorization、Cookie、用户密码、
+`SAG_SECRET_KEY`、`SAG_AUTH_BOOTSTRAP_TOKEN`、用户文档正文、`sag.env`、`sag.db`、
+完整 `/data`、备份归档及其下载链接不得进入本目录。备份即使已加密也不属于验收证据。
 
 建议结构：
 

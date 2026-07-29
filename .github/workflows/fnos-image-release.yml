@@ -95,6 +95,8 @@ jobs:
             --env SAG_ENVIRONMENT=prod \
             --env SAG_DEBUG=false \
             --env SAG_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+            --env SAG_AUTH_MODE=password \
+            --env SAG_AUTH_BOOTSTRAP_TOKEN=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 \
             sag-api-smoke:"$GITHUB_SHA"
           docker run --detach --name sag-web-smoke --publish 13000:3000 sag-web-smoke:"$GITHUB_SHA"
           for attempt in {1..30}; do
@@ -102,6 +104,21 @@ jobs:
             sleep 2
             test "$attempt" -lt 30 || { docker logs sag-api-smoke; exit 1; }
           done
+          name_only_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --data '{"name":"Smoke Owner"}' \
+            http://127.0.0.1:18000/api/v1/auth/login)"
+          test "$name_only_status" = 401
+          initialized_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --data '{"name":"Smoke Owner","password":"candidate password","bootstrap_token":"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"}' \
+            http://127.0.0.1:18000/api/v1/auth/login)"
+          test "$initialized_status" = 200
+          password_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --data '{"name":"Smoke Owner","password":"candidate password"}' \
+            http://127.0.0.1:18000/api/v1/auth/login)"
+          test "$password_status" = 200
           for attempt in {1..20}; do
             curl --fail --silent --show-error http://127.0.0.1:13000/ >/dev/null && break
             sleep 2

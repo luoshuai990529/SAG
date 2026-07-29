@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,9 +11,59 @@ from sag_api.core.errors import AuthError, ConflictError, ForbiddenError, Valida
 from sag_api.core.security import hash_password, verify_password
 from sag_api.db.models import User
 
+_AUTH_FAILURE = "身份验证失败"
 
-async def register_user(session: AsyncSession, *, email: str, password: str, name: str = "") -> User:
+
+def _bootstrap_value() -> str:
     from sag_api.core.config import settings
+
+    configured = settings.auth_bootstrap_token
+    get_secret_value = getattr(configured, "get_secret_value", None)
+    return get_secret_value() if get_secret_value is not None else str(configured)
+
+
+def _valid_bootstrap(candidate: str | None) -> bool:
+    configured = _bootstrap_value()
+    return bool(candidate and configured) and hmac.compare_digest(candidate, configured)
+
+
+def _valid_new_password(password: str | None) -> bool:
+    from sag_api.core.config import settings
+
+    return bool(password) and len(password) >= settings.auth_password_min_length
+
+
+async def _first_user(session: AsyncSession) -> User | None:
+    return await session.scalar(select(User).order_by(User.created_at.asc()).limit(1))
+
+
+async def register_user(
+    session: AsyncSession,
+    *,
+    email: str,
+    password: str,
+    name: str = "",
+    bootstrap_token: str | None = None,
+) -> User:
+    from sag_api.core.config import settings
+
+    if settings.auth_mode == "password":
+        if (
+            await _first_user(session) is not None
+            or not _valid_bootstrap(bootstrap_token)
+            or not _valid_new_password(password)
+        ):
+            raise AuthError(_AUTH_FAILURE)
+        user = User(
+            email=email,
+            password_hash=hash_password(password),
+            password_initialized=True,
+            name=name or email.split("@")[0],
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        return user
 
     existing = await session.scalar(select(User).where(User.email == email))
     if existing is not None:
@@ -25,6 +77,7 @@ async def register_user(session: AsyncSession, *, email: str, password: str, nam
     user = User(
         email=email,
         password_hash=hash_password(password),
+        password_initialized=True,
         name=name or email.split("@")[0],
     )
     session.add(user)
@@ -48,9 +101,54 @@ async def authenticate_or_register(
     name: str = "",
     email: str = "",
     password: str | None = None,
+    bootstrap_token: str | None = None,
 ) -> User:
+    from sag_api.core.config import settings
+
     name = name.strip()
     email = email.strip().lower()
+
+    if settings.auth_mode == "password":
+        user = await _first_user(session)
+        if user is None:
+            if (
+                not name
+                or not _valid_new_password(password)
+                or not _valid_bootstrap(bootstrap_token)
+            ):
+                raise AuthError(_AUTH_FAILURE)
+            user = User(
+                email=email,
+                password_hash=hash_password(password or ""),
+                password_initialized=True,
+                name=name,
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return user
+
+        name_matches = bool(name) and hmac.compare_digest(name, user.name)
+        bootstrap_reset = _valid_bootstrap(bootstrap_token)
+        if bootstrap_reset:
+            if not name_matches or not _valid_new_password(password) or not user.is_active:
+                raise AuthError(_AUTH_FAILURE)
+            user.password_hash = hash_password(password or "")
+            user.password_initialized = True
+            await session.commit()
+            await session.refresh(user)
+            return user
+
+        if (
+            not user.password_initialized
+            or not name_matches
+            or not password
+            or not verify_password(password, user.password_hash)
+            or not user.is_active
+        ):
+            raise AuthError(_AUTH_FAILURE)
+        return user
+
     password_supplied = bool(password)
     password = password or "admin"
     rename_local_user = False
@@ -86,6 +184,7 @@ async def authenticate_or_register(
     user = User(
         email=email,
         password_hash=hash_password(password),
+        password_initialized=password_supplied,
         name=name,
     )
     session.add(user)

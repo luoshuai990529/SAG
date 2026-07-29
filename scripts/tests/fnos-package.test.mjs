@@ -48,6 +48,7 @@ async function fakeRegistry(t, {
       api: {
         image: `ghcr.io/luoshuai990529/sag-api@${digestA}`,
         env_file: [{ path: "${TRIM_PKGETC}/sag.env", required: true }],
+        environment: { SAG_AUTH_MODE: "password" },
       },
       web: { image: `ghcr.io/luoshuai990529/sag-web@${digestB}` },
       gateway: { image: `docker.io/library/nginx@${digestC}` },
@@ -316,6 +317,7 @@ test("structural mode renders and fnpack-builds an official package only in a te
   assert.doesNotMatch(compose, /__SAG_(?:API|WEB|NGINX)_IMAGE__/);
   assert.match(compose, /\$\{TRIM_SERVICE_PORT\}:80/);
   assert.match(compose, /\$\{TRIM_PKGETC\}\/sag\.env/);
+  assert.match(compose, /SAG_AUTH_MODE:\s*password/);
   assert.match(compose, /\$\{TRIM_PKGVAR\}\/data:\/data/);
   assert.match(compose, /lifecycle-size:/);
   assert.match(compose, /profiles:\s*\["lifecycle"\]/);

@@ -79,4 +79,7 @@ shasum -a 256 hello-docker.fpk
 
 - GHCR 发布使用 GitHub Actions 的 `GITHUB_TOKEN` 和 `packages: write`；不得把 PAT 写进仓库或 shell 历史。
 - 模型、Embedding、MinerU 测试凭据只在私下提供后录入 SAG 页面，不进入 `.env` 样例、日志、截图或 `.fpk`。
+- 本地 Compose 的 `SAG_SECRET_KEY` 与 `SAG_AUTH_BOOTSTRAP_TOKEN` 必须分别生成，
+  不得相同；fnOS 安装脚本会在设备私有 `sag.env` 中完成同样操作。两者都不得进入
+  仓库、构建参数、日志、截图或验收证据。
 - 正式 `.fpk` 构建只接收已发布、可检查的 digest 引用。

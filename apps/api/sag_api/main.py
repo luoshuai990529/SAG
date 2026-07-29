@@ -44,6 +44,12 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(
             "生产环境的 SAG_SECRET_KEY 必须是强随机值（≥32 字节），例如：openssl rand -hex 32"
         )
+    if settings.environment == "prod" and settings.auth_mode == "password":
+        bootstrap_token = settings.auth_bootstrap_token.get_secret_value()
+        if len(bootstrap_token.encode("utf-8")) < 32:
+            raise RuntimeError("生产密码认证需要独立的强随机 SAG_AUTH_BOOTSTRAP_TOKEN（≥32 字节）")
+        if bootstrap_token == settings.secret_key:
+            raise RuntimeError("SAG_SECRET_KEY 与 SAG_AUTH_BOOTSTRAP_TOKEN 必须彼此独立")
     os.makedirs(settings.data_dir, exist_ok=True)
     os.makedirs(settings.upload_dir, exist_ok=True)
 

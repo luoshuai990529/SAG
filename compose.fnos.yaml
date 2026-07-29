@@ -12,6 +12,8 @@ services:
       SAG_ENVIRONMENT: prod
       SAG_DEBUG: "false"
       SAG_SECRET_KEY: "${SAG_SECRET_KEY:?Set SAG_SECRET_KEY in .env.fnos to a strong random value (for example: openssl rand -hex 32)}"
+      SAG_AUTH_MODE: password
+      SAG_AUTH_BOOTSTRAP_TOKEN: "${SAG_AUTH_BOOTSTRAP_TOKEN:?Set an independent SAG_AUTH_BOOTSTRAP_TOKEN in .env.fnos (for example: openssl rand -hex 32)}"
       SAG_CORS_ORIGINS: ""
       SAG_ALLOW_REGISTRATION: "false"
       SAG_DATABASE_URL: sqlite+aiosqlite:////data/sag.db

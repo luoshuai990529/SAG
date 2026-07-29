@@ -7,6 +7,9 @@
 - 候选包声明 `platform=x86`、`os_min_version=1.2.0302`，当前认证目标仅为 x86-64 VMware fnOS 测试机。
 - 安装时需要 fnOS 在不登录仓库的情况下匿名拉取公开 GHCR 镜像和 Docker Hub 官方 Nginx 镜像。发布包必须使用 API、Web、Nginx 的 manifest-list digest，不能使用 `latest` 或可变标签。
 - API `8000` 和 Web `3000` 只在 Compose 网络内可见；用户入口为 `http://<fnOS 可达地址>:3080`。
+- fnOS 包显式启用密码认证。首次设置、旧版密码初始化和管理员重置需要
+  `${TRIM_PKGETC}/sag.env` 中独立生成的 bootstrap 凭据；之后登录只使用原名字
+  和用户密码，不能通过名字登录或改名取得令牌。本地开发仍默认保留无密码名字登录。
 - Mac 已完成 Docker、Buildx、Compose、`fnpack` 和 `hello-world` 本地准备。`appcenter-cli` 是 fnOS 设备上的工具，不是 Mac 必装工具。
 - 源码、生命周期测试和临时结构包已经具备；公开 GHCR 镜像、正式 `.fpk`、Windows `3080` NAT、防火墙和 fnOS UI 生命周期验收仍是外部门禁。
 - 候选发布先在 CI runner 本地 smoke amd64，再写入每次运行唯一的 GHCR staging tag；

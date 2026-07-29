@@ -49,3 +49,19 @@ test("fnOS release workflow invokes the executable digest handoff and promotion 
   assert.doesNotMatch(promote, /reconcile_tag\(\)|inspect_final_tag\(\)/);
   assert.match(workflow, /concurrency:\n  group: fnos-candidate-/);
 });
+
+test("amd64 smoke starts the API in password mode and exercises bootstrap plus daily login", async () => {
+  const workflow = await readFile(workflowPath, "utf8");
+  const smoke = job(workflow, "local-amd64-smoke");
+
+  assert.match(smoke, /--env SAG_AUTH_MODE=password/);
+  const sessionSecret = /--env SAG_SECRET_KEY=([a-f0-9]{64})/.exec(smoke)?.[1];
+  const bootstrap = /--env SAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})/.exec(smoke)?.[1];
+  assert.ok(sessionSecret);
+  assert.ok(bootstrap);
+  assert.notEqual(sessionSecret, bootstrap);
+  assert.match(smoke, /\/api\/v1\/auth\/login/);
+  assert.match(smoke, /test "\$name_only_status" = 401/);
+  assert.match(smoke, /test "\$initialized_status" = 200/);
+  assert.match(smoke, /test "\$password_status" = 200/);
+});

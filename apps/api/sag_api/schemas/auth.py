@@ -9,6 +9,7 @@ class RegisterRequest(BaseModel):
     email: str
     password: str = Field(min_length=8, max_length=128)
     name: str = ""
+    bootstrap_token: str | None = Field(default=None, max_length=256)
 
     @field_validator("email")
     @classmethod
@@ -23,6 +24,7 @@ class LoginRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     email: str = Field(default="", max_length=255)
     password: str | None = Field(default=None, max_length=128)
+    bootstrap_token: str | None = Field(default=None, max_length=256)
 
     @field_validator("name")
     @classmethod

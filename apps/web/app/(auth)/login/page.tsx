@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { setToken } from "@/lib/auth";
 import { PRODUCT_NAME } from "@/lib/branding";
+import { buildLoginRequest } from "@/lib/login";
 import { LanguageToggle } from "@/components/features/language-toggle";
 import { ThemeToggle } from "@/components/features/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,8 @@ export default function LaunchPage() {
   const t = useTranslations("Login");
   const router = useRouter();
   const [name, setName] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [bootstrapToken, setBootstrapToken] = React.useState("");
   const [loading, setLoading] = React.useState(false);
 
   async function onSubmit(event: React.FormEvent) {
@@ -28,7 +31,9 @@ export default function LaunchPage() {
     if (!nextName) return;
     setLoading(true);
     try {
-      const response = await api.login({ name: nextName });
+      const response = await api.login(
+        buildLoginRequest(nextName, password, bootstrapToken),
+      );
       setToken(response.access_token);
       toast.success(t("welcome", { name: response.user.name }));
       router.replace("/chat");
@@ -86,6 +91,40 @@ export default function LaunchPage() {
                 autoComplete="name"
                 autoFocus
               />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="password">{t("passwordLabel")}</FieldLabel>
+              <Input
+                id="password"
+                type="password"
+                minLength={12}
+                maxLength={128}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder={t("passwordPlaceholder")}
+                autoComplete="current-password"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="bootstrap-token">
+                {t("bootstrapLabel")}
+              </FieldLabel>
+              <Input
+                id="bootstrap-token"
+                type="password"
+                maxLength={256}
+                value={bootstrapToken}
+                onChange={(event) => setBootstrapToken(event.target.value)}
+                placeholder={t("bootstrapPlaceholder")}
+                autoComplete="off"
+                aria-describedby="bootstrap-help"
+              />
+              <p
+                id="bootstrap-help"
+                className="text-xs leading-relaxed text-muted-foreground"
+              >
+                {t("bootstrapHelp")}
+              </p>
             </Field>
             <Button
               type="submit"

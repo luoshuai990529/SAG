@@ -24,6 +24,7 @@ services:
     environment:
       SAG_ENVIRONMENT: prod
       SAG_DEBUG: "false"
+      SAG_AUTH_MODE: password
       SAG_CORS_ORIGINS: ""
       SAG_ALLOW_REGISTRATION: "false"
       SAG_DATABASE_URL: sqlite+aiosqlite:////data/sag.db

@@ -17,7 +17,7 @@ from functools import lru_cache
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from sag_api.core.model_providers import ModelProviderId, get_model_provider
@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     debug: bool = True
     secret_key: str = "dev-insecure-secret-change-me-in-production-0123456789"
     access_token_expire_minutes: int = 60 * 24 * 7  # 7 天
+    # legacy 保留本地开发的名字即身份体验；password 用于 fnOS 等局域网生产部署。
+    auth_mode: Literal["legacy", "password"] = "legacy"
+    # password 模式首次初始化/管理员重置所需，必须与 JWT secret 分离且不写日志。
+    auth_bootstrap_token: SecretStr = SecretStr("")
+    auth_password_min_length: int = Field(default=12, ge=12, le=128)
     # 业务展示时区；数据库与 API 时间戳始终使用 UTC。
     timezone: str = "Asia/Shanghai"
     # NoDecode 让逗号分隔值先进入下方 validator，避免 settings 源强制按 JSON 解码。

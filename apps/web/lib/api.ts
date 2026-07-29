@@ -418,7 +418,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(b),
     }),
-  login: (b: { name: string; email?: string; password?: string }) =>
+  login: (b: {
+    name: string;
+    email?: string;
+    password?: string;
+    bootstrap_token?: string;
+  }) =>
     request<TokenResponse>("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify(b),

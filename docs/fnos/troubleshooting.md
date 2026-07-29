@@ -1,6 +1,6 @@
 # 故障排查
 
-先记录版本、时间和现象，再做只读检查。日志和截图必须遮盖 Token、模型密钥、Authorization、Cookie 和 `SAG_SECRET_KEY`。
+先记录版本、时间和现象，再做只读检查。日志和截图必须遮盖 Token、模型密钥、Authorization、Cookie、`SAG_SECRET_KEY` 和 `SAG_AUTH_BOOTSTRAP_TOKEN`。
 
 ## 入口不可达
 
@@ -103,7 +103,26 @@ SECRET_FILE="${TRIM_PKGETC_PATH}/sag.env"
 stat "$SECRET_FILE"
 ```
 
-文件应为普通文件、权限 `0600`，且仅含 64 位十六进制 `SAG_SECRET_KEY`。安装脚本遇到已有弱密钥会拒绝覆盖。不要手工轮换密钥作为一般排障步骤；轮换会使现有 JWT 失效。
+文件应为非符号链接的普通文件、权限 `0600`，且恰好包含两个不同的 64 位十六进制值：
+
+```text
+SAG_SECRET_KEY=<redacted>
+SAG_AUTH_BOOTSTRAP_TOKEN=<redacted>
+```
+
+不要把真实输出贴入工单。安装脚本遇到已有弱密钥、重复值、多余行或错误字段会拒绝
+覆盖；从旧版升级时只保留原会话密钥并原子增加缺失的 bootstrap 值。不要手工轮换
+`SAG_SECRET_KEY` 作为一般排障步骤，轮换会使现有 JWT 失效。
+
+fnOS 登录失败统一返回“身份验证失败”，不会说明用户、密码还是 bootstrap 是否正确：
+
+- 首次安装或旧库升级后首次登录：原名字（新安装可自定）+ 至少 12 位密码 +
+  bootstrap；
+- 日常登录：原名字 + 密码，bootstrap 留空；
+- 管理员重置：原名字 + 至少 12 位新密码 + bootstrap。
+
+若浏览器仍持有升级前的有效 JWT，可以先正常使用，但应尽快在受控维护窗口退出并完成
+密码初始化。不要尝试历史隐式默认密码，也不要通过改名绕过认证。
 
 ## 升级因空间不足中止
 

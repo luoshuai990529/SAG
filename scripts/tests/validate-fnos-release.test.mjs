@@ -12,14 +12,21 @@ const digest = `sha256:${"a".repeat(64)}`;
 function validCompose({
   api = "",
   apiSecret = "${SAG_SECRET_KEY:?set in the runtime environment}",
+  apiBootstrap = "${SAG_AUTH_BOOTSTRAP_TOKEN:?set in the runtime environment}",
+  apiAuthMode = "password",
   apiEnvFile = "",
   web = "",
   gateway = "",
 } = {}) {
-  const secretEnvironment = apiSecret === null
-    ? ""
-    : `    environment:\n      SAG_SECRET_KEY: ${apiSecret}\n`;
-  return `name: sag\nservices:\n  api:\n    image: ghcr.io/luoshuai990529/sag-api@${digest}\n${apiEnvFile}${secretEnvironment}${api}  web:\n    image: ghcr.io/luoshuai990529/sag-web@${digest}\n${web}  gateway:\n    image: nginx@${digest}\n${gateway}`;
+  const environment = [
+    apiAuthMode === null ? null : `      SAG_AUTH_MODE: ${apiAuthMode}`,
+    apiSecret === null ? null : `      SAG_SECRET_KEY: ${apiSecret}`,
+    apiBootstrap === null ? null : `      SAG_AUTH_BOOTSTRAP_TOKEN: ${apiBootstrap}`,
+  ].filter(Boolean);
+  const authEnvironment = environment.length
+    ? `    environment:\n${environment.join("\n")}\n`
+    : "";
+  return `name: sag\nservices:\n  api:\n    image: ghcr.io/luoshuai990529/sag-api@${digest}\n${apiEnvFile}${authEnvironment}${api}  web:\n    image: ghcr.io/luoshuai990529/sag-web@${digest}\n${web}  gateway:\n    image: nginx@${digest}\n${gateway}`;
 }
 
 async function fixture(t, contents) {
@@ -47,6 +54,7 @@ test("accepts a digest-pinned release Compose with a required runtime API secret
 test("accepts an fnOS package env_file as the API secret source", async (t) => {
   const compose = await fixture(t, validCompose({
     apiSecret: null,
+    apiBootstrap: null,
     apiEnvFile: "    env_file:\n      - ${TRIM_PKGETC}/sag.env\n",
   }));
   const result = validate(compose);
@@ -58,6 +66,7 @@ test("accepts an fnOS package env_file as the API secret source", async (t) => {
 test("rejects an fnOS secret env_file followed by an override env_file", async (t) => {
   const compose = await fixture(t, validCompose({
     apiSecret: null,
+    apiBootstrap: null,
     apiEnvFile: "    env_file:\n      - ${TRIM_PKGETC}/sag.env\n      - ./override.env\n",
   }));
   const result = validate(compose);
@@ -69,6 +78,7 @@ test("rejects an fnOS secret env_file followed by an override env_file", async (
 test("rejects an optional fnOS secret env_file", async (t) => {
   const compose = await fixture(t, validCompose({
     apiSecret: null,
+    apiBootstrap: null,
     apiEnvFile: "    env_file:\n      - path: ${TRIM_PKGETC}/sag.env\n        required: false\n",
   }));
   const result = validate(compose);
@@ -109,6 +119,22 @@ test("rejects a predictable 64-zero literal API secret", async (t) => {
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /required SAG_SECRET_KEY/);
+});
+
+test("rejects a release Compose that leaves the legacy name-only auth mode enabled", async (t) => {
+  const compose = await fixture(t, validCompose({ apiAuthMode: "legacy" }));
+  const result = validate(compose);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /SAG_AUTH_MODE=password/);
+});
+
+test("rejects a literal auth bootstrap credential", async (t) => {
+  const compose = await fixture(t, validCompose({ apiBootstrap: `"${"b".repeat(64)}"` }));
+  const result = validate(compose);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /required SAG_AUTH_BOOTSTRAP_TOKEN/);
 });
 
 test("rejects an API host port", async (t) => {

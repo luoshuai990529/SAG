@@ -341,14 +341,21 @@ test("upgrade rejects a noncanonical package parent before Docker", async (t) =>
   assert.match(await readFile(fixture.tempLog, "utf8"), /unsafe.*package parent/i);
 });
 
-test("install creates private directories and an idempotent mode-0600 random secret", async (t) => {
+test("install creates private directories and idempotent independent mode-0600 secrets", async (t) => {
   const fixture = await lifecycleFixture(t);
 
   const first = runScript("install_callback", fixture.env);
   assert.equal(first.status, 0, first.stderr);
   const envFile = path.join(fixture.pkgEtc, "sag.env");
   const initial = await readFile(envFile, "utf8");
-  assert.match(initial, /^SAG_SECRET_KEY=[a-f0-9]{64}\n$/);
+  assert.match(
+    initial,
+    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
+  );
+  const [, sessionSecret, bootstrapToken] = initial.match(
+    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
+  );
+  assert.notEqual(sessionSecret, bootstrapToken);
   assert.equal((await stat(envFile)).mode & 0o777, 0o600);
   for (const directory of [fixture.pkgEtc, path.join(fixture.pkgVar, "data"), path.join(fixture.pkgVar, "backup")]) {
     assert.equal((await stat(directory)).isDirectory(), true);
@@ -361,6 +368,40 @@ test("install creates private directories and an idempotent mode-0600 random sec
   assert.equal(second.status, 0, second.stderr);
   assert.equal(await readFile(envFile, "utf8"), initial);
   assert.equal((await stat(envFile)).mode & 0o777, 0o600);
+});
+
+test("install atomically adds a bootstrap credential to a valid legacy env without rotating JWT sessions", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const envFile = path.join(fixture.pkgEtc, "sag.env");
+  const legacySecret = "a".repeat(64);
+  await writeFile(envFile, `SAG_SECRET_KEY=${legacySecret}\n`, { mode: 0o600 });
+
+  const result = runScript("install_callback", fixture.env);
+
+  assert.equal(result.status, 0, result.stderr);
+  const upgraded = await readFile(envFile, "utf8");
+  assert.match(
+    upgraded,
+    new RegExp(`^SAG_SECRET_KEY=${legacySecret}\\nSAG_AUTH_BOOTSTRAP_TOKEN=[a-f0-9]{64}\\n$`),
+  );
+  assert.equal((await stat(envFile)).mode & 0o777, 0o600);
+});
+
+test("upgrade callback initializes auth secrets for a legacy passwordless installation", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const envFile = path.join(fixture.pkgEtc, "sag.env");
+  const legacySecret = "e".repeat(64);
+  await mkdir(path.join(fixture.pkgVar, "data"), { recursive: true });
+  await mkdir(path.join(fixture.pkgVar, "backup"), { recursive: true });
+  await writeFile(envFile, `SAG_SECRET_KEY=${legacySecret}\n`, { mode: 0o600 });
+
+  const result = runScript("upgrade_callback", fixture.env);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(
+    await readFile(envFile, "utf8"),
+    new RegExp(`^SAG_SECRET_KEY=${legacySecret}\\nSAG_AUTH_BOOTSTRAP_TOKEN=[a-f0-9]{64}\\n$`),
+  );
 });
 
 test("install accepts a trailing slash in TRIM_PKGVAR", async (t) => {
