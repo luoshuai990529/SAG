@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -272,21 +272,27 @@ test("container lifecycle helper cleans partial archives and preserves symlink s
 });
 
 for (const source of ["data", "backup"]) {
-  test(`upgrade rejects a ${source} mount-source symlink before Docker`, async (t) => {
+  test(`upgrade rejects a ${source} mount-source symlink without mutating its target`, async (t) => {
     const fixture = await lifecycleFixture(t);
     const external = path.join(fixture.root, `external-${source}`);
     await mkdir(external, { recursive: true });
+    await writeFile(path.join(external, "keep.txt"), "unchanged\n");
+    await chmod(external, 0o755);
+    const otherSource = path.join(fixture.pkgVar, source === "data" ? "backup" : "data");
+    await mkdir(otherSource, { recursive: true });
+    await chmod(otherSource, 0o755);
     if (source === "data") {
       await symlink(external, path.join(fixture.pkgVar, "data"));
-      await mkdir(path.join(fixture.pkgVar, "backup"), { recursive: true });
     } else {
-      await mkdir(path.join(fixture.pkgVar, "data"), { recursive: true });
       await symlink(external, path.join(fixture.pkgVar, "backup"));
     }
 
     const result = runScript("upgrade_init", fixture.env);
 
     assert.notEqual(result.status, 0);
+    assert.equal((await stat(external)).mode & 0o777, 0o755);
+    assert.equal((await stat(otherSource)).mode & 0o777, 0o755);
+    assert.equal(await readFile(path.join(external, "keep.txt"), "utf8"), "unchanged\n");
     assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /^docker /m);
     assert.match(await readFile(fixture.tempLog, "utf8"), /unsafe.*mount source/i);
   });
@@ -303,6 +309,19 @@ test("explicit uninstall rejects a substituted data symlink before Docker", asyn
 
   assert.notEqual(result.status, 0);
   assert.equal(await readFile(path.join(external, "keep.txt"), "utf8"), "keep");
+  assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /^docker /m);
+  assert.match(await readFile(fixture.tempLog, "utf8"), /unsafe.*mount source/i);
+});
+
+test("explicit uninstall rejects and preserves a dangling data symlink", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const dataLink = path.join(fixture.pkgVar, "data");
+  await symlink(path.join(fixture.root, "missing-delete-target"), dataLink);
+
+  const result = runScript("uninstall_callback", { ...fixture.env, SAG_DELETE_DATA: "true" });
+
+  assert.notEqual(result.status, 0);
+  assert.equal((await lstat(dataLink)).isSymbolicLink(), true);
   assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /^docker /m);
   assert.match(await readFile(fixture.tempLog, "utf8"), /unsafe.*mount source/i);
 });
@@ -344,6 +363,18 @@ test("install creates private directories and an idempotent mode-0600 random sec
   assert.equal((await stat(envFile)).mode & 0o777, 0o600);
 });
 
+test("install accepts a trailing slash in TRIM_PKGVAR", async (t) => {
+  const fixture = await lifecycleFixture(t);
+
+  const result = runScript("install_callback", {
+    ...fixture.env,
+    TRIM_PKGVAR: `${fixture.pkgVar}/`,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal((await stat(path.join(fixture.pkgVar, "data"))).isDirectory(), true);
+  assert.equal((await stat(path.join(fixture.pkgVar, "backup"))).isDirectory(), true);
+});
 test("install rejects an existing malformed secret without overwriting it", async (t) => {
   const fixture = await lifecycleFixture(t);
   const envFile = path.join(fixture.pkgEtc, "sag.env");
@@ -543,6 +574,21 @@ test("upgrade cold-backs up the complete data tree with a temp archive and atomi
   assert.ok(commands.indexOf(" stop") < commands.indexOf("SAG_LIFECYCLE_ACTION=backup"));
 });
 
+test("upgrade accepts a trailing slash in TRIM_PKGVAR", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  await mkdir(path.join(fixture.pkgVar, "data"), { recursive: true });
+
+  const result = runScript("upgrade_init", {
+    ...fixture.env,
+    TRIM_PKGVAR: `${fixture.pkgVar}/`,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const backupFiles = await readdir(path.join(fixture.pkgVar, "backup"));
+  assert.equal(backupFiles.length, 1);
+  assert.match(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=backup/);
+});
+
 test("failed archive creation preserves active data and leaves no partial backup", async (t) => {
   const fixture = await lifecycleFixture(t, { FAKE_HELPER_BACKUP_EXIT: "7" });
   await mkdir(path.join(fixture.pkgVar, "backup"), { recursive: true });
@@ -606,6 +652,22 @@ test("uninstall retains data by default and deletes it only after explicit selec
 
   const deleted = runScript("uninstall_callback", { ...fixture.env, SAG_DELETE_DATA: "true" });
   assert.equal(deleted.status, 0, deleted.stderr);
+  await assert.rejects(stat(path.join(fixture.pkgVar, "data")), { code: "ENOENT" });
+  assert.match(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=delete/);
+});
+
+test("explicit uninstall accepts a trailing slash in TRIM_PKGVAR", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  await mkdir(path.join(fixture.pkgVar, "data"), { recursive: true });
+  await writeFile(path.join(fixture.pkgVar, "data/keep.txt"), "delete me\n");
+
+  const result = runScript("uninstall_callback", {
+    ...fixture.env,
+    TRIM_PKGVAR: `${fixture.pkgVar}/`,
+    SAG_DELETE_DATA: "true",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
   await assert.rejects(stat(path.join(fixture.pkgVar, "data")), { code: "ENOENT" });
   assert.match(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=delete/);
 });

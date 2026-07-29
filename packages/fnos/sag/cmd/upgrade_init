@@ -8,8 +8,6 @@ log_error() {
 
 umask 077
 
-data_dir="${TRIM_PKGVAR}/data"
-backup_dir="${TRIM_PKGVAR}/backup"
 compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
 
 canonical_dir() {
@@ -37,27 +35,40 @@ validate_owned_canonical_dir() {
     fi
 }
 
-pkgvar_dir="${TRIM_PKGVAR%/}"
+pkgvar_dir="${TRIM_PKGVAR}"
+while [ "${pkgvar_dir}" != "/" ] && [ "${pkgvar_dir%/}" != "${pkgvar_dir}" ]; do
+    pkgvar_dir="${pkgvar_dir%/}"
+done
+data_dir="${pkgvar_dir}/data"
+backup_dir="${pkgvar_dir}/backup"
+
 validate_owned_canonical_dir "${pkgvar_dir}" "package parent" || exit 1
+
+if [ ! -L "${data_dir}" ] && [ ! -e "${data_dir}" ]; then
+    log_error "SAG upgrade aborted: the active data directory is missing."
+    exit 1
+fi
+validate_owned_canonical_dir "${data_dir}" "data" || exit 1
+
+backup_exists=0
+if [ -L "${backup_dir}" ] || [ -e "${backup_dir}" ]; then
+    validate_owned_canonical_dir "${backup_dir}" "backup" || exit 1
+    backup_exists=1
+fi
+
 chmod 700 "${pkgvar_dir}" || {
     log_error "SAG upgrade could not protect its private package parent."
     exit 1
 }
-
-if [ ! -d "${data_dir}" ]; then
-    log_error "SAG upgrade aborted: the active data directory is missing."
-    exit 1
-fi
-if ! mkdir -p "${backup_dir}"; then
+if [ "${backup_exists}" -eq 0 ] && ! mkdir -- "${backup_dir}"; then
     log_error "SAG upgrade could not prepare its backup directory."
     exit 1
 fi
+validate_owned_canonical_dir "${backup_dir}" "backup" || exit 1
 if ! chmod 700 "${data_dir}" "${backup_dir}"; then
     log_error "SAG upgrade could not protect its private data and backup directories."
     exit 1
 fi
-validate_owned_canonical_dir "${data_dir}" "data" || exit 1
-validate_owned_canonical_dir "${backup_dir}" "backup" || exit 1
 
 data_kib="$(docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
     -e SAG_LIFECYCLE_ACTION=size lifecycle-size /opt/sag-lifecycle.py 2>> "${TRIM_TEMP_LOGFILE}")" || {

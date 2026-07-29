@@ -4,10 +4,13 @@ set -u
 
 case "${SAG_DELETE_DATA:-false}" in
 true)
-    data_dir="${TRIM_PKGVAR}/data"
+    pkgvar_dir="${TRIM_PKGVAR}"
+    while [ "${pkgvar_dir}" != "/" ] && [ "${pkgvar_dir%/}" != "${pkgvar_dir}" ]; do
+        pkgvar_dir="${pkgvar_dir%/}"
+    done
+    data_dir="${pkgvar_dir}/data"
     compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
-    if [ -d "${data_dir}" ]; then
-        pkgvar_dir="${TRIM_PKGVAR%/}"
+    if [ -L "${data_dir}" ] || [ -e "${data_dir}" ]; then
         canonical_dir() {
             (cd -P -- "$1" 2>/dev/null && pwd -P)
         }

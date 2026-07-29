@@ -12,44 +12,63 @@ canonical_dir() {
     (cd -P -- "$1" 2>/dev/null && pwd -P)
 }
 
-pkgvar_dir="${TRIM_PKGVAR%/}"
-pkgetc_dir="${TRIM_PKGETC%/}"
+normalize_trailing_slashes() {
+    normalized="$1"
+    while [ "${normalized}" != "/" ] && [ "${normalized%/}" != "${normalized}" ]; do
+        normalized="${normalized%/}"
+    done
+    printf '%s\n' "${normalized}"
+}
+
+validate_owned_canonical_dir() {
+    candidate="$1"
+    if [ ! -d "${candidate}" ] || [ -L "${candidate}" ] || [ ! -O "${candidate}" ]; then
+        log_error "SAG installation rejected an unsafe private directory."
+        return 1
+    fi
+    resolved="$(canonical_dir "${candidate}")" || return 1
+    if [ "${resolved}" != "${candidate}" ]; then
+        log_error "SAG installation rejected an unsafe noncanonical private directory."
+        return 1
+    fi
+}
+
+pkgvar_dir="$(normalize_trailing_slashes "${TRIM_PKGVAR}")"
+pkgetc_dir="$(normalize_trailing_slashes "${TRIM_PKGETC}")"
 for private_parent in "${pkgvar_dir}" "${pkgetc_dir}"; do
     case "${private_parent}" in
         /*) ;;
         *) log_error "SAG installation rejected an unsafe non-absolute private parent."; exit 1 ;;
     esac
-    if [ ! -d "${private_parent}" ] || [ -L "${private_parent}" ] || [ ! -O "${private_parent}" ]; then
+    if ! validate_owned_canonical_dir "${private_parent}"; then
         log_error "SAG installation rejected an unsafe private parent."
         exit 1
     fi
-    resolved="$(canonical_dir "${private_parent}")" || exit 1
-    if [ "${resolved}" != "${private_parent}" ]; then
-        log_error "SAG installation rejected an unsafe noncanonical private parent."
-        exit 1
+done
+
+for private_child in "${pkgvar_dir}/data" "${pkgvar_dir}/backup"; do
+    if [ -L "${private_child}" ] || [ -e "${private_child}" ]; then
+        validate_owned_canonical_dir "${private_child}" || exit 1
     fi
 done
+
 if ! chmod 700 "${pkgvar_dir}" "${pkgetc_dir}"; then
     log_error "SAG installation could not protect its private parents."
     exit 1
 fi
 for private_child in "${pkgvar_dir}/data" "${pkgvar_dir}/backup"; do
-    if [ -L "${private_child}" ]; then
-        log_error "SAG installation rejected an unsafe private-directory symlink."
+    if [ ! -e "${private_child}" ] && ! mkdir -- "${private_child}"; then
+        log_error "SAG installation could not create its private directories."
         exit 1
     fi
+    validate_owned_canonical_dir "${private_child}" || exit 1
 done
-
-if ! mkdir -p "${TRIM_PKGETC}" "${TRIM_PKGVAR}/data" "${TRIM_PKGVAR}/backup"; then
-    log_error "SAG installation could not create its private directories."
-    exit 1
-fi
 if ! chmod 700 "${pkgvar_dir}/data" "${pkgvar_dir}/backup"; then
     log_error "SAG installation could not protect its private directories."
     exit 1
 fi
 
-secret_file="${TRIM_PKGETC}/sag.env"
+secret_file="${pkgetc_dir}/sag.env"
 
 if [ ! -e "${secret_file}" ]; then
     secret="$(openssl rand -hex 32)" || {

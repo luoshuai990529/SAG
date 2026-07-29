@@ -30,7 +30,9 @@
 
 空间测量、停止、归档或发布失败都会在修改数据前/期间终止，并通过 `TRIM_TEMP_LOGFILE` 给出错误。失败的临时归档会被清理；仅当本次 hook 发现项目原先正在运行并由本次 hook 停止（或部分停止）时，失败路径才尽力恢复旧项目。成功路径不会重启旧项目。
 
-helper 分为只读测量、只读数据/可写备份和可写删除三个 Compose profile 服务，均复用已固定 digest 的 API 镜像，关闭网络、使用只读根文件系统、启用 `no-new-privileges`、先移除全部 capabilities，再仅加入读取/处理 API root 所有文件所需的 `DAC_OVERRIDE`。调用前脚本拒绝符号链接、非绝对或非规范化的 `${TRIM_PKGVAR}`、`data` 和 `backup` 来源，并把包私有父目录设为 `0700`，防止无关普通用户替换挂载源。检查与 Docker 创建 bind mount 之间仍存在只能由 fnOS 特权 root 利用的 TOCTOU 窗口；当前信任边界假设 fnOS root 未被攻陷，必须在目标设备验证实际 callback 身份、目录所有权和 Docker 挂载结果。
+helper 分为只读测量、只读数据/可写备份和可写删除三个 Compose profile 服务，均复用已固定 digest 的 API 镜像，关闭网络、使用只读根文件系统、启用 `no-new-privileges`、先移除全部 capabilities，再仅加入读取/处理 API root 所有文件所需的 `DAC_OVERRIDE`。调用前脚本拒绝符号链接、非绝对或非规范化的 `${TRIM_PKGVAR}`、`data` 和 `backup` 来源；在修改已有叶目录前完成检查，并把包私有父目录设为 `0700`，防止无关普通用户替换挂载源。
+
+这些脚本只验证包私有父目录及叶目录本身的所有者和规范路径，不验证从文件系统根到 `${TRIM_PKGVAR}` 的每一级祖先目录。路径检查与后续 `chmod`、Docker bind mount 之间也仍有 TOCTOU 窗口。因此信任边界必须包括 callback 的运行身份、同一 UID 的其他进程，以及任何能在祖先目录中重命名或替换路径组件的主体，而不只是特权 root。目标设备验收必须确认实际 callback 身份，并逐级检查祖先目录的所有者和组/其他用户写权限，同时复核 Docker 最终挂载源；如果这条祖先信任链不能成立，不应启用自动备份或明确删除。
 
 升级前仍应把最近一次冷备复制到应用私有运行目录之外。fnOS 卸载时是否自动清理 `${TRIM_PKGVAR}` 需要在目标设备实测，不能把同目录备份当作唯一副本。
 
