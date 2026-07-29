@@ -43,7 +43,7 @@ function parseArgs(argv) {
 }
 
 function nonemptyString(value) {
-  return typeof value === "string" && value.length > 0;
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function inspectReport(report, policy, reasons) {
@@ -71,9 +71,17 @@ function inspectReport(report, policy, reasons) {
   if (typeof imageId !== "string" || !/^sha256:[a-f0-9]{64}$/.test(imageId)) {
     reasons.push("report Metadata.ImageID must be a full lowercase sha256 digest");
   }
+  let findingsKnown = true;
   const os = report.Metadata?.OS;
   if (!nonemptyString(os?.Family) || !nonemptyString(os?.Name)) {
     reasons.push("report operating-system Family and Name are required");
+    findingsKnown = false;
+  } else if (
+    os.Family !== policy.vulnerabilityGate.os.family
+    || os.Name !== policy.vulnerabilityGate.os.version
+  ) {
+    reasons.push("report operating-system evidence differs from the reviewed policy");
+    findingsKnown = false;
   }
 
   if (!Array.isArray(report.Results) || report.Results.length === 0) {
@@ -90,39 +98,74 @@ function inspectReport(report, policy, reasons) {
   for (const [index, result] of report.Results.entries()) {
     if (!result || typeof result !== "object" || Array.isArray(result)) {
       reasons.push(`report Results[${index}] must be an object`);
+      findingsKnown = false;
       continue;
     }
-    if (!nonemptyString(result.Target) || !nonemptyString(result.Class) || !nonemptyString(result.Type)) {
-      reasons.push(`report Results[${index}] Target, Class, and Type are required`);
+    if (
+      !nonemptyString(result.Target)
+      || result.Class !== "os-pkgs"
+      || !nonemptyString(result.Type)
+      || result.Type !== policy.vulnerabilityGate.os.family
+      || result.Type !== os?.Family
+    ) {
+      reasons.push(
+        `report Results[${index}] must be an OS-package result with nonempty Target, Class os-pkgs, and reviewed Type`,
+      );
+      findingsKnown = false;
+    }
+    if (!Array.isArray(result.Packages) || result.Packages.length === 0) {
+      reasons.push(`report Results[${index}].Packages must be a nonempty array`);
+      findingsKnown = false;
+    } else {
+      for (const [packageIndex, pkg] of result.Packages.entries()) {
+        if (
+          !pkg
+          || typeof pkg !== "object"
+          || Array.isArray(pkg)
+          || !nonemptyString(pkg.Name)
+          || !nonemptyString(pkg.Version)
+        ) {
+          reasons.push(
+            `report Results[${index}].Packages[${packageIndex}] must be a Trivy package with nonempty Name and Version`,
+          );
+          findingsKnown = false;
+        }
+      }
     }
     if (!Object.hasOwn(result, "Vulnerabilities")) {
       reasons.push(`report Results[${index}] must explicitly contain a Vulnerabilities property`);
+      findingsKnown = false;
       continue;
     }
     if (result.Vulnerabilities === null) continue;
     if (!Array.isArray(result.Vulnerabilities)) {
       reasons.push(`report Results[${index}].Vulnerabilities must be an array or explicit null`);
+      findingsKnown = false;
       continue;
     }
-    findings += result.Vulnerabilities.length;
     for (const [findingIndex, finding] of result.Vulnerabilities.entries()) {
       if (
         !finding
         || typeof finding !== "object"
         || Array.isArray(finding)
         || !nonemptyString(finding.VulnerabilityID)
+        || !nonemptyString(finding.PkgName)
+        || !nonemptyString(finding.InstalledVersion)
         || !["HIGH", "CRITICAL"].includes(finding.Severity)
         || !nonemptyString(finding.FixedVersion)
       ) {
+        findingsKnown = false;
         reasons.push(
-          `report Results[${index}].Vulnerabilities[${findingIndex}] is not a fixable High/Critical Trivy finding`,
+          `report Results[${index}].Vulnerabilities[${findingIndex}] must be a fixable High/Critical Trivy vulnerability with package identity and versions`,
         );
+      } else {
+        findings += 1;
       }
     }
   }
-  if (findings > 0) reasons.push(`report contains ${findings} finding(s)`);
+  if (findingsKnown && findings > 0) reasons.push(`report contains ${findings} finding(s)`);
   return {
-    findings,
+    findings: findingsKnown ? findings : null,
     scannedAt,
     imageId: /^sha256:[a-f0-9]{64}$/.test(imageId ?? "") ? imageId : null,
     os: nonemptyString(os?.Family) && nonemptyString(os?.Name) ? os : null,

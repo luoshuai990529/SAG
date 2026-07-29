@@ -11,6 +11,26 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const summarizer = path.join(repoRoot, "scripts/summarize-fnos-gateway-scan.mjs");
 const reference = "docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
 
+function validPackage(overrides = {}) {
+  return {
+    ID: "nginx@1.30.4-r1",
+    Name: "nginx",
+    Version: "1.30.4-r1",
+    ...overrides,
+  };
+}
+
+function validVulnerability(overrides = {}) {
+  return {
+    VulnerabilityID: "CVE-TEST-1",
+    PkgName: "nginx",
+    InstalledVersion: "1.30.4-r0",
+    FixedVersion: "1.30.4-r1",
+    Severity: "HIGH",
+    ...overrides,
+  };
+}
+
 function completeReport(overrides = {}) {
   return {
     SchemaVersion: 2,
@@ -26,6 +46,7 @@ function completeReport(overrides = {}) {
       Target: "nginx",
       Class: "os-pkgs",
       Type: "alpine",
+      Packages: [validPackage()],
       Vulnerabilities: null,
     }],
     ...overrides,
@@ -75,16 +96,13 @@ test("stores compact evidence for a passed exact-digest gateway scan", async (t)
 });
 
 test("refuses to summarize a report containing a vulnerability finding", async (t) => {
-  const finding = {
-    VulnerabilityID: "CVE-TEST-1",
-    Severity: "HIGH",
-    FixedVersion: "1.2.3-r1",
-  };
+  const finding = validVulnerability();
   const contents = completeReport({
     Results: [{
       Target: "nginx",
       Class: "os-pkgs",
       Type: "alpine",
+      Packages: [validPackage()],
       Vulnerabilities: [finding],
     }],
   });
@@ -128,6 +146,16 @@ test("rejects incomplete Trivy report structure and still writes failure evidenc
     ["invalid CreatedAt", { CreatedAt: "2026-02-30T00:00:00Z" }, /CreatedAt/i],
     ["invalid ImageID", { Metadata: { OS: { Family: "alpine", Name: "3.24.1" }, ImageID: "short" } }, /ImageID/i],
     ["missing OS", { Metadata: { ImageID: `sha256:${"6".repeat(64)}` } }, /operating-system/i],
+    [
+      "wrong OS evidence",
+      {
+        Metadata: {
+          OS: { Family: "debian", Name: "12" },
+          ImageID: `sha256:${"6".repeat(64)}`,
+        },
+      },
+      /reviewed policy/i,
+    ],
   ];
   for (const [name, overrides, expected] of cases) {
     const reportObject = completeReport(overrides);
@@ -143,13 +171,104 @@ test("rejects incomplete Trivy report structure and still writes failure evidenc
 
 test("rejects a result that omits the explicit Vulnerabilities property", async (t) => {
   const reportObject = completeReport({
-    Results: [{ Target: "nginx", Class: "os-pkgs", Type: "alpine" }],
+    Results: [{
+      Target: "nginx",
+      Class: "os-pkgs",
+      Type: "alpine",
+      Packages: [validPackage()],
+    }],
   });
   const { report, output } = await fixture(t, JSON.stringify(reportObject));
   const result = summarize(report, output);
   assert.notEqual(result.status, 0);
   const evidence = JSON.parse(await readFile(output, "utf8"));
   assert.match(evidence.scan.failureReasons.join("\n"), /Vulnerabilities property/i);
+});
+
+test("rejects invalid OS-package evidence even with explicit null vulnerabilities", async (t) => {
+  const cases = [
+    ["null package", { Packages: [null] }],
+    ["empty packages", { Packages: [] }],
+    ["missing packages", { Packages: undefined }],
+    ["wrong class", { Class: "lang-pkgs" }],
+    ["missing class", { Class: undefined }],
+    ["wrong type", { Type: "debian" }],
+    ["missing type", { Type: undefined }],
+    ["missing target", { Target: "" }],
+    ["missing package name", { Packages: [validPackage({ Name: undefined })] }],
+    ["missing package version", { Packages: [validPackage({ Version: undefined })] }],
+  ];
+  for (const [name, resultOverrides] of cases) {
+    const result = {
+      Target: "nginx",
+      Class: "os-pkgs",
+      Type: "alpine",
+      Packages: [validPackage()],
+      Vulnerabilities: null,
+      ...resultOverrides,
+    };
+    const { report, output } = await fixture(t, JSON.stringify(completeReport({
+      Results: [result],
+    })));
+    const execution = summarize(report, output);
+    assert.notEqual(execution.status, 0, name);
+    const evidence = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(evidence.scan.result, "failed", name);
+    assert.equal(evidence.scan.fixableHighCriticalFindings, null, name);
+    assert.match(
+      evidence.scan.failureReasons.join("\n"),
+      /OS-package|Packages|package|Target|Class|Type/i,
+      name,
+    );
+  }
+});
+
+test("rejects malformed explicit vulnerability values", async (t) => {
+  const cases = [
+    ["wrong container", "none", /Vulnerabilities must be an array or explicit null/i],
+    ["null finding", [null], /Vulnerabilities\[0\].*Trivy vulnerability/i],
+    [
+      "missing vulnerability ID",
+      [validVulnerability({ VulnerabilityID: undefined })],
+      /Vulnerabilities\[0\].*Trivy vulnerability/i,
+    ],
+    [
+      "missing package name",
+      [validVulnerability({ PkgName: undefined })],
+      /Vulnerabilities\[0\].*Trivy vulnerability/i,
+    ],
+    [
+      "missing installed version",
+      [validVulnerability({ InstalledVersion: undefined })],
+      /Vulnerabilities\[0\].*Trivy vulnerability/i,
+    ],
+    [
+      "wrong severity",
+      [validVulnerability({ Severity: "MEDIUM" })],
+      /Vulnerabilities\[0\].*Trivy vulnerability/i,
+    ],
+    [
+      "missing fixed version",
+      [validVulnerability({ FixedVersion: undefined })],
+      /Vulnerabilities\[0\].*Trivy vulnerability/i,
+    ],
+  ];
+  for (const [name, vulnerabilities, expected] of cases) {
+    const { report, output } = await fixture(t, JSON.stringify(completeReport({
+      Results: [{
+        Target: "nginx",
+        Class: "os-pkgs",
+        Type: "alpine",
+        Packages: [validPackage()],
+        Vulnerabilities: vulnerabilities,
+      }],
+    })));
+    const execution = summarize(report, output, 1);
+    assert.notEqual(execution.status, 0, name);
+    const evidence = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(evidence.scan.result, "failed", name);
+    assert.match(evidence.scan.failureReasons.join("\n"), expected, name);
+  }
 });
 
 test("rejects a complete report for the wrong artifact reference or type", async (t) => {
