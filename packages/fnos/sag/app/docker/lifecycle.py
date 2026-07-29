@@ -13,10 +13,18 @@ BACKUP_ROOT = Path(os.environ.get("SAG_BACKUP_ROOT", "/backup"))
 
 def data_size_kib() -> None:
     total = 0
-    for root, _directories, files in os.walk(DATA_ROOT):
+    for root, directories, files in os.walk(DATA_ROOT, followlinks=False):
+        root_stat = os.lstat(root)
+        total += max(root_stat.st_size, root_stat.st_blocks * 512)
+        for name in directories:
+            path = Path(root, name)
+            if path.is_symlink():
+                item_stat = os.lstat(path)
+                total += max(item_stat.st_size, item_stat.st_blocks * 512)
         for name in files:
             try:
-                total += os.lstat(Path(root, name)).st_size
+                item_stat = os.lstat(Path(root, name))
+                total += max(item_stat.st_size, item_stat.st_blocks * 512)
             except FileNotFoundError:
                 pass
     print((total + 1023) // 1024)
@@ -27,9 +35,19 @@ def create_backup() -> None:
     if requested.parent != PurePosixPath("/backup") or requested.name in {"", ".", ".."}:
         raise ValueError("SAG_ARCHIVE_TEMP must name one file directly under /backup")
     target = BACKUP_ROOT / requested.name
-    with tarfile.open(target, "x:gz") as archive:
-        archive.add(DATA_ROOT, arcname="data", recursive=True)
-    target.chmod(0o600)
+    reserved = False
+    try:
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(descriptor)
+        reserved = True
+        with tarfile.open(target, "w:gz") as archive:
+            archive.dereference = False
+            archive.add(DATA_ROOT, arcname="data", recursive=True)
+        target.chmod(0o600)
+    except BaseException:
+        if reserved:
+            target.unlink(missing_ok=True)
+        raise
 
 
 def delete_data_contents() -> None:

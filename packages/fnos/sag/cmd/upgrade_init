@@ -12,6 +12,38 @@ data_dir="${TRIM_PKGVAR}/data"
 backup_dir="${TRIM_PKGVAR}/backup"
 compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
 
+canonical_dir() {
+    (cd -P -- "$1" 2>/dev/null && pwd -P)
+}
+
+validate_owned_canonical_dir() {
+    candidate="${1%/}"
+    label="$2"
+    case "${candidate}" in
+        /*) ;;
+        *) log_error "SAG upgrade rejected unsafe ${label} mount source: path is not absolute."; return 1 ;;
+    esac
+    if [ ! -d "${candidate}" ] || [ -L "${candidate}" ] || [ ! -O "${candidate}" ]; then
+        log_error "SAG upgrade rejected unsafe ${label} mount source."
+        return 1
+    fi
+    resolved="$(canonical_dir "${candidate}")" || {
+        log_error "SAG upgrade could not resolve ${label} mount source."
+        return 1
+    }
+    if [ "${resolved}" != "${candidate}" ]; then
+        log_error "SAG upgrade rejected unsafe noncanonical ${label} mount source."
+        return 1
+    fi
+}
+
+pkgvar_dir="${TRIM_PKGVAR%/}"
+validate_owned_canonical_dir "${pkgvar_dir}" "package parent" || exit 1
+chmod 700 "${pkgvar_dir}" || {
+    log_error "SAG upgrade could not protect its private package parent."
+    exit 1
+}
+
 if [ ! -d "${data_dir}" ]; then
     log_error "SAG upgrade aborted: the active data directory is missing."
     exit 1
@@ -24,9 +56,11 @@ if ! chmod 700 "${data_dir}" "${backup_dir}"; then
     log_error "SAG upgrade could not protect its private data and backup directories."
     exit 1
 fi
+validate_owned_canonical_dir "${data_dir}" "data" || exit 1
+validate_owned_canonical_dir "${backup_dir}" "backup" || exit 1
 
 data_kib="$(docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
-    -e SAG_LIFECYCLE_ACTION=size lifecycle /opt/sag-lifecycle.py 2>> "${TRIM_TEMP_LOGFILE}")" || {
+    -e SAG_LIFECYCLE_ACTION=size lifecycle-size /opt/sag-lifecycle.py 2>> "${TRIM_TEMP_LOGFILE}")" || {
     log_error "SAG upgrade could not measure the active data tree."
     exit 1
 }
@@ -87,9 +121,11 @@ if ! docker compose -f "${compose_file}" stop >> "${TRIM_TEMP_LOGFILE}" 2>&1; th
     exit 1
 fi
 
+validate_owned_canonical_dir "${data_dir}" "data" || exit 1
+validate_owned_canonical_dir "${backup_dir}" "backup" || exit 1
 if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
     -e SAG_LIFECYCLE_ACTION=backup -e "SAG_ARCHIVE_TEMP=/backup/${archive_temp##*/}" \
-    lifecycle /opt/sag-lifecycle.py >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
+    lifecycle-backup /opt/sag-lifecycle.py >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
     log_error "SAG upgrade backup archive failed; active data was not changed."
     exit 1
 fi

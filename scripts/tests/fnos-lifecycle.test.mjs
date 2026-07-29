@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -17,7 +17,7 @@ async function writeCommand(binDir, name, body) {
 }
 
 async function lifecycleFixture(t, overrides = {}) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-lifecycle-"));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "sag-fnos-lifecycle-")));
   const binDir = path.join(root, "bin");
   const pkgVar = path.join(root, "var");
   const pkgEtc = path.join(root, "etc");
@@ -152,6 +152,9 @@ test("container lifecycle helper archives the full tree privately and deletes ne
   await writeFile(path.join(data, "sag.db"), "database");
   await writeFile(path.join(data, "nested/source.pdf"), "document");
   await writeFile(path.join(data, ".state"), "hidden");
+  const sparseFile = path.join(data, "sparse.bin");
+  await writeFile(sparseFile, "");
+  await truncate(sparseFile, 4 * 1024 * 1024);
   t.after(async () => rm(root, { recursive: true, force: true }));
 
   const helperEnv = {
@@ -164,7 +167,7 @@ test("container lifecycle helper archives the full tree privately and deletes ne
     env: { ...helperEnv, SAG_LIFECYCLE_ACTION: "size" },
   });
   assert.equal(size.status, 0, size.stderr);
-  assert.match(size.stdout, /^\d+\n$/);
+  assert.ok(Number.parseInt(size.stdout, 10) >= 4096, size.stdout);
 
   const archiveName = "full-data.tar.gz.tmp";
   const archived = spawnSync("python3", [helperScript], {
@@ -193,6 +196,132 @@ test("container lifecycle helper archives the full tree privately and deletes ne
   assert.deepEqual(await readdir(data), []);
 });
 
+test("container lifecycle helper rejects traversal and exclusive-create collisions", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-helper-guard-"));
+  const data = path.join(root, "data");
+  const backup = path.join(root, "backup");
+  await mkdir(data, { recursive: true });
+  await mkdir(backup, { recursive: true });
+  await writeFile(path.join(data, "value"), "data");
+  t.after(async () => rm(root, { recursive: true, force: true }));
+  const baseEnv = { ...process.env, SAG_DATA_ROOT: data, SAG_BACKUP_ROOT: backup, SAG_LIFECYCLE_ACTION: "backup" };
+
+  const traversal = spawnSync("python3", [helperScript], {
+    encoding: "utf8",
+    env: { ...baseEnv, SAG_ARCHIVE_TEMP: "/backup/../escape.tar.gz.tmp" },
+  });
+  assert.notEqual(traversal.status, 0);
+  await assert.rejects(stat(path.join(root, "escape.tar.gz.tmp")), { code: "ENOENT" });
+
+  const collision = path.join(backup, "collision.tar.gz.tmp");
+  await writeFile(collision, "preserve-existing");
+  const collided = spawnSync("python3", [helperScript], {
+    encoding: "utf8",
+    env: { ...baseEnv, SAG_ARCHIVE_TEMP: "/backup/collision.tar.gz.tmp" },
+  });
+  assert.notEqual(collided.status, 0);
+  assert.equal(await readFile(collision, "utf8"), "preserve-existing");
+});
+
+test("container lifecycle helper cleans partial archives and preserves symlink semantics", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-helper-links-"));
+  const data = path.join(root, "data");
+  const backup = path.join(root, "backup");
+  const external = path.join(root, "external");
+  await mkdir(data, { recursive: true });
+  await mkdir(backup, { recursive: true });
+  await mkdir(external, { recursive: true });
+  await writeFile(path.join(external, "outside.txt"), "outside");
+  await symlink(external, path.join(data, "external-link"));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+  const baseEnv = { ...process.env, SAG_DATA_ROOT: data, SAG_BACKUP_ROOT: backup };
+
+  const linkedArchive = "links.tar.gz.tmp";
+  const archived = spawnSync("python3", [helperScript], {
+    encoding: "utf8",
+    env: { ...baseEnv, SAG_LIFECYCLE_ACTION: "backup", SAG_ARCHIVE_TEMP: `/backup/${linkedArchive}` },
+  });
+  assert.equal(archived.status, 0, archived.stderr);
+  const linkMetadata = spawnSync("python3", ["-c", "import sys,tarfile; m=tarfile.open(sys.argv[1]).getmember('data/external-link'); print(m.issym(), m.linkname)", path.join(backup, linkedArchive)], { encoding: "utf8" });
+  assert.equal(linkMetadata.status, 0, linkMetadata.stderr);
+  assert.match(linkMetadata.stdout, /^True /);
+
+  const deleted = spawnSync("python3", [helperScript], {
+    encoding: "utf8",
+    env: { ...baseEnv, SAG_LIFECYCLE_ACTION: "delete" },
+  });
+  assert.equal(deleted.status, 0, deleted.stderr);
+  assert.equal(await readFile(path.join(external, "outside.txt"), "utf8"), "outside");
+  assert.deepEqual(await readdir(data), []);
+
+  const unreadable = path.join(data, "unreadable.bin");
+  await writeFile(unreadable, "private");
+  await chmod(unreadable, 0o000);
+  const partialName = "partial.tar.gz.tmp";
+  let failed;
+  try {
+    failed = spawnSync("python3", [helperScript], {
+      encoding: "utf8",
+      env: { ...baseEnv, SAG_LIFECYCLE_ACTION: "backup", SAG_ARCHIVE_TEMP: `/backup/${partialName}` },
+    });
+  } finally {
+    await chmod(unreadable, 0o600);
+  }
+  assert.notEqual(failed.status, 0);
+  await assert.rejects(stat(path.join(backup, partialName)), { code: "ENOENT" });
+});
+
+for (const source of ["data", "backup"]) {
+  test(`upgrade rejects a ${source} mount-source symlink before Docker`, async (t) => {
+    const fixture = await lifecycleFixture(t);
+    const external = path.join(fixture.root, `external-${source}`);
+    await mkdir(external, { recursive: true });
+    if (source === "data") {
+      await symlink(external, path.join(fixture.pkgVar, "data"));
+      await mkdir(path.join(fixture.pkgVar, "backup"), { recursive: true });
+    } else {
+      await mkdir(path.join(fixture.pkgVar, "data"), { recursive: true });
+      await symlink(external, path.join(fixture.pkgVar, "backup"));
+    }
+
+    const result = runScript("upgrade_init", fixture.env);
+
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /^docker /m);
+    assert.match(await readFile(fixture.tempLog, "utf8"), /unsafe.*mount source/i);
+  });
+}
+
+test("explicit uninstall rejects a substituted data symlink before Docker", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const external = path.join(fixture.root, "external-delete-target");
+  await mkdir(external, { recursive: true });
+  await writeFile(path.join(external, "keep.txt"), "keep");
+  await symlink(external, path.join(fixture.pkgVar, "data"));
+
+  const result = runScript("uninstall_callback", { ...fixture.env, SAG_DELETE_DATA: "true" });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(await readFile(path.join(external, "keep.txt"), "utf8"), "keep");
+  assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /^docker /m);
+  assert.match(await readFile(fixture.tempLog, "utf8"), /unsafe.*mount source/i);
+});
+
+test("upgrade rejects a noncanonical package parent before Docker", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const actual = path.join(fixture.root, "actual-private-var");
+  const alias = path.join(fixture.root, "aliased-private-var");
+  await mkdir(path.join(actual, "data"), { recursive: true });
+  await mkdir(path.join(actual, "backup"), { recursive: true });
+  await symlink(actual, alias);
+
+  const result = runScript("upgrade_init", { ...fixture.env, TRIM_PKGVAR: alias });
+
+  assert.notEqual(result.status, 0);
+  assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /^docker /m);
+  assert.match(await readFile(fixture.tempLog, "utf8"), /unsafe.*package parent/i);
+});
+
 test("install creates private directories and an idempotent mode-0600 random secret", async (t) => {
   const fixture = await lifecycleFixture(t);
 
@@ -206,6 +335,7 @@ test("install creates private directories and an idempotent mode-0600 random sec
     assert.equal((await stat(directory)).isDirectory(), true);
     assert.equal((await stat(directory)).mode & 0o777, 0o700);
   }
+  assert.equal((await stat(fixture.pkgVar)).mode & 0o777, 0o700);
 
   await chmod(envFile, 0o644);
   const second = runScript("install_callback", fixture.env);

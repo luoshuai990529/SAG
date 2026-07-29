@@ -7,8 +7,39 @@ true)
     data_dir="${TRIM_PKGVAR}/data"
     compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
     if [ -d "${data_dir}" ]; then
+        pkgvar_dir="${TRIM_PKGVAR%/}"
+        canonical_dir() {
+            (cd -P -- "$1" 2>/dev/null && pwd -P)
+        }
+        validate_owned_canonical_dir() {
+            candidate="${1%/}"
+            label="$2"
+            case "${candidate}" in
+                /*) ;;
+                *) printf '%s\n' "SAG uninstall rejected unsafe ${label} mount source: path is not absolute." >> "${TRIM_TEMP_LOGFILE}"; return 1 ;;
+            esac
+            if [ ! -d "${candidate}" ] || [ -L "${candidate}" ] || [ ! -O "${candidate}" ]; then
+                printf '%s\n' "SAG uninstall rejected unsafe ${label} mount source." >> "${TRIM_TEMP_LOGFILE}"
+                return 1
+            fi
+            resolved="$(canonical_dir "${candidate}")" || return 1
+            if [ "${resolved}" != "${candidate}" ]; then
+                printf '%s\n' "SAG uninstall rejected unsafe noncanonical ${label} mount source." >> "${TRIM_TEMP_LOGFILE}"
+                return 1
+            fi
+        }
+        validate_owned_canonical_dir "${pkgvar_dir}" "package parent" || exit 1
+        chmod 700 "${pkgvar_dir}" || {
+            printf '%s\n' "SAG uninstall could not protect its private package parent." >> "${TRIM_TEMP_LOGFILE}"
+            exit 1
+        }
+        validate_owned_canonical_dir "${data_dir}" "data" || exit 1
+        chmod 700 "${data_dir}" || {
+            printf '%s\n' "SAG uninstall could not protect its private mount parents." >> "${TRIM_TEMP_LOGFILE}"
+            exit 1
+        }
         if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
-            -e SAG_LIFECYCLE_ACTION=delete lifecycle /opt/sag-lifecycle.py \
+            -e SAG_LIFECYCLE_ACTION=delete lifecycle-delete /opt/sag-lifecycle.py \
             >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
             printf '%s\n' "SAG uninstall could not delete the selected active data." >> "${TRIM_TEMP_LOGFILE}"
             exit 1

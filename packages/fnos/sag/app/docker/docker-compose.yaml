@@ -1,6 +1,19 @@
 name: sag
 
 x-sag-api-image: &sag-api-image "__SAG_API_IMAGE__"
+x-sag-lifecycle: &sag-lifecycle
+  profiles: ["lifecycle"]
+  image: *sag-api-image
+  entrypoint: ["python"]
+  user: "0:0"
+  network_mode: none
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  cap_add:
+    - DAC_OVERRIDE
 
 services:
   api:
@@ -50,18 +63,23 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  lifecycle:
-    profiles: ["lifecycle"]
-    image: *sag-api-image
-    entrypoint: ["python"]
-    user: "0:0"
-    network_mode: none
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
+  lifecycle-size:
+    <<: *sag-lifecycle
+    volumes:
+      - "${TRIM_PKGVAR}/data:/data:ro"
+      - "${TRIM_APPDEST}/docker/lifecycle.py:/opt/sag-lifecycle.py:ro"
+
+  lifecycle-backup:
+    <<: *sag-lifecycle
+    volumes:
+      - "${TRIM_PKGVAR}/data:/data:ro"
+      - "${TRIM_PKGVAR}/backup:/backup"
+      - "${TRIM_APPDEST}/docker/lifecycle.py:/opt/sag-lifecycle.py:ro"
+
+  lifecycle-delete:
+    <<: *sag-lifecycle
     volumes:
       - "${TRIM_PKGVAR}/data:/data"
-      - "${TRIM_PKGVAR}/backup:/backup"
       - "${TRIM_APPDEST}/docker/lifecycle.py:/opt/sag-lifecycle.py:ro"
 
   web:

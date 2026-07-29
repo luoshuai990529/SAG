@@ -144,10 +144,33 @@ test("structural mode renders and fnpack-builds an official package only in a te
   assert.match(compose, /\$\{TRIM_SERVICE_PORT\}:80/);
   assert.match(compose, /\$\{TRIM_PKGETC\}\/sag\.env/);
   assert.match(compose, /\$\{TRIM_PKGVAR\}\/data:\/data/);
-  assert.match(compose, /lifecycle:/);
+  assert.match(compose, /lifecycle-size:/);
   assert.match(compose, /profiles:\s*\["lifecycle"\]/);
   assert.match(compose, /network_mode: none/);
   assert.match(compose, /user: "0:0"/);
+
+  const canonical = spawnSync("docker", [
+    "compose", "-f", composePath, "config", "--no-interpolate", "--no-path-resolution", "--format", "json",
+  ], { cwd: repoRoot, encoding: "utf8" });
+  assert.equal(canonical.status, 0, canonical.stderr);
+  const helperServices = JSON.parse(canonical.stdout).services;
+  const expectedMounts = {
+    "lifecycle-size": [["/data", true], ["/opt/sag-lifecycle.py", true]],
+    "lifecycle-backup": [["/data", true], ["/backup", false], ["/opt/sag-lifecycle.py", true]],
+    "lifecycle-delete": [["/data", false], ["/opt/sag-lifecycle.py", true]],
+  };
+  for (const [name, mounts] of Object.entries(expectedMounts)) {
+    const service = helperServices[name];
+    assert.equal(service.image, `test.invalid/sag-api@${digestA}`);
+    assert.deepEqual(service.profiles, ["lifecycle"]);
+    assert.equal(service.user, "0:0");
+    assert.equal(service.network_mode, "none");
+    assert.equal(service.read_only, true);
+    assert.deepEqual(service.security_opt, ["no-new-privileges:true"]);
+    assert.deepEqual(service.cap_drop, ["ALL"]);
+    assert.deepEqual(service.cap_add, ["DAC_OVERRIDE"]);
+    assert.deepEqual(service.volumes.map(({ target, read_only: readOnly = false }) => [target, readOnly]), mounts);
+  }
 
   const validation = spawnSync(process.execPath, [validator, composePath], {
     cwd: repoRoot,

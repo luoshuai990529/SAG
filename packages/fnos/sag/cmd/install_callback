@@ -8,11 +8,43 @@ log_error() {
 
 umask 077
 
+canonical_dir() {
+    (cd -P -- "$1" 2>/dev/null && pwd -P)
+}
+
+pkgvar_dir="${TRIM_PKGVAR%/}"
+pkgetc_dir="${TRIM_PKGETC%/}"
+for private_parent in "${pkgvar_dir}" "${pkgetc_dir}"; do
+    case "${private_parent}" in
+        /*) ;;
+        *) log_error "SAG installation rejected an unsafe non-absolute private parent."; exit 1 ;;
+    esac
+    if [ ! -d "${private_parent}" ] || [ -L "${private_parent}" ] || [ ! -O "${private_parent}" ]; then
+        log_error "SAG installation rejected an unsafe private parent."
+        exit 1
+    fi
+    resolved="$(canonical_dir "${private_parent}")" || exit 1
+    if [ "${resolved}" != "${private_parent}" ]; then
+        log_error "SAG installation rejected an unsafe noncanonical private parent."
+        exit 1
+    fi
+done
+if ! chmod 700 "${pkgvar_dir}" "${pkgetc_dir}"; then
+    log_error "SAG installation could not protect its private parents."
+    exit 1
+fi
+for private_child in "${pkgvar_dir}/data" "${pkgvar_dir}/backup"; do
+    if [ -L "${private_child}" ]; then
+        log_error "SAG installation rejected an unsafe private-directory symlink."
+        exit 1
+    fi
+done
+
 if ! mkdir -p "${TRIM_PKGETC}" "${TRIM_PKGVAR}/data" "${TRIM_PKGVAR}/backup"; then
     log_error "SAG installation could not create its private directories."
     exit 1
 fi
-if ! chmod 700 "${TRIM_PKGETC}" "${TRIM_PKGVAR}/data" "${TRIM_PKGVAR}/backup"; then
+if ! chmod 700 "${pkgvar_dir}/data" "${pkgvar_dir}/backup"; then
     log_error "SAG installation could not protect its private directories."
     exit 1
 fi
