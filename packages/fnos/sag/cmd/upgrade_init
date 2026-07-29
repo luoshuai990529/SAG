@@ -19,12 +19,20 @@ if ! mkdir -p "${backup_dir}"; then
     exit 1
 fi
 
-data_kib="$(du -sk "${data_dir}" 2>> "${TRIM_TEMP_LOGFILE}" | awk 'NR == 1 {print $1}')" || {
+du_output="$(du -sk "${data_dir}" 2>> "${TRIM_TEMP_LOGFILE}")" || {
     log_error "SAG upgrade could not measure the active data tree."
     exit 1
 }
-available_kib="$(df -Pk "${backup_dir}" 2>> "${TRIM_TEMP_LOGFILE}" | awk 'NR == 2 {print $4}')" || {
+data_kib="$(awk 'NR == 1 {print $1}' <<< "${du_output}")" || {
+    log_error "SAG upgrade could not parse the active data measurement."
+    exit 1
+}
+df_output="$(df -Pk "${backup_dir}" 2>> "${TRIM_TEMP_LOGFILE}")" || {
     log_error "SAG upgrade could not measure free backup space."
+    exit 1
+}
+available_kib="$(awk 'NR == 2 {print $4}' <<< "${df_output}")" || {
+    log_error "SAG upgrade could not parse the free-space measurement."
     exit 1
 }
 

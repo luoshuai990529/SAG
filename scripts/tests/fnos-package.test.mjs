@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { access, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -62,6 +62,32 @@ test("test-only fixture references are refused outside structural-test mode", as
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /test-only|approved release repositories/i);
+});
+
+test("release build refuses an approved digest when registry inspection fails", async (t) => {
+  const root = await tempRoot(t);
+  const bin = path.join(root, "bin");
+  const docker = path.join(bin, "docker");
+  const commandLog = path.join(root, "docker.log");
+  const output = path.join(root, "candidate.fpk");
+  await mkdir(bin, { recursive: true });
+  await writeFile(docker, `#!/bin/bash\nprintf '%s\\n' "$*" >> "$FAKE_DOCKER_LOG"\nexit 9\n`);
+  await chmod(docker, 0o755);
+
+  const result = build([
+    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--nginx-image", `docker.io/library/nginx@${digestC}`,
+    "--output", output,
+  ], {
+    PATH: `${bin}:${process.env.PATH}`,
+    FAKE_DOCKER_LOG: commandLog,
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /docker failed/i);
+  assert.match((await readFile(commandLog, "utf8")).trim(), new RegExp(`^buildx imagetools inspect ghcr\\.io/luoshuai990529/sag-api@${digestA}$`));
+  await assert.rejects(access(output));
 });
 
 test("lifecycle scripts have valid Bash syntax and the official callback shape", () => {

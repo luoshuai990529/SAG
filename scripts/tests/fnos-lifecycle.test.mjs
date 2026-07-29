@@ -54,11 +54,17 @@ exit "\${FAKE_CURL_EXIT:-0}"
   await writeCommand(binDir, "du", `
 printf 'du %s\\n' "$*" >> "$FAKE_COMMAND_LOG"
 printf '%s\\t%s\\n' "\${FAKE_DU_KIB:-100}" "\${2:-}"
+exit "\${FAKE_DU_EXIT:-0}"
   `);
   await writeCommand(binDir, "df", `
 printf 'df %s\\n' "$*" >> "$FAKE_COMMAND_LOG"
 printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'
 printf 'fake 100000 1 %s 1%% /fake\\n' "\${FAKE_DF_AVAILABLE_KIB:-10000}"
+exit "\${FAKE_DF_EXIT:-0}"
+  `);
+  await writeCommand(binDir, "chmod", `
+if [ "\${FAKE_CHMOD_EXIT:-0}" -ne 0 ]; then exit "$FAKE_CHMOD_EXIT"; fi
+exec /bin/chmod "$@"
   `);
   await writeCommand(binDir, "tar", `
 printf 'tar %s\\n' "$*" >> "$FAKE_COMMAND_LOG"
@@ -133,6 +139,16 @@ test("install rejects an existing malformed secret without overwriting it", asyn
   assert.match(await readFile(fixture.tempLog, "utf8"), /invalid existing secret/i);
 });
 
+test("install logs a user-visible error when temporary secret protection fails", async (t) => {
+  const fixture = await lifecycleFixture(t, { FAKE_CHMOD_EXIT: "7" });
+
+  const result = runScript("install_callback", fixture.env);
+
+  assert.notEqual(result.status, 0);
+  await assert.rejects(stat(path.join(fixture.pkgEtc, "sag.env")), { code: "ENOENT" });
+  assert.match(await readFile(fixture.tempLog, "utf8"), /could not protect its temporary secret/i);
+});
+
 test("status is running only when gateway state and health plus API readiness pass", async (t) => {
   const fixture = await lifecycleFixture(t);
   const healthy = runScript("main", fixture.env, ["status"]);
@@ -181,6 +197,38 @@ test("upgrade refuses a missing active data tree without creating it", async (t)
   assert.doesNotMatch(commands, /^docker /m);
   assert.doesNotMatch(commands, /^tar /m);
   assert.match(await readFile(fixture.tempLog, "utf8"), /active data directory is missing/i);
+});
+
+test("upgrade rejects a du producer that prints a plausible value then fails", async (t) => {
+  const fixture = await lifecycleFixture(t, { FAKE_DU_EXIT: "7" });
+  const dataFile = path.join(fixture.pkgVar, "data/keep.txt");
+  await mkdir(path.dirname(dataFile), { recursive: true });
+  await writeFile(dataFile, "unchanged\n");
+
+  const result = runScript("upgrade_init", fixture.env);
+
+  assert.notEqual(result.status, 0);
+  assert.equal(await readFile(dataFile, "utf8"), "unchanged\n");
+  const commands = await readFile(fixture.commandLog, "utf8");
+  assert.doesNotMatch(commands, /^docker /m);
+  assert.doesNotMatch(commands, /^tar /m);
+  assert.match(await readFile(fixture.tempLog, "utf8"), /could not measure the active data tree/i);
+});
+
+test("upgrade rejects a df producer that prints a plausible value then fails", async (t) => {
+  const fixture = await lifecycleFixture(t, { FAKE_DF_EXIT: "8" });
+  const dataFile = path.join(fixture.pkgVar, "data/keep.txt");
+  await mkdir(path.dirname(dataFile), { recursive: true });
+  await writeFile(dataFile, "unchanged\n");
+
+  const result = runScript("upgrade_init", fixture.env);
+
+  assert.notEqual(result.status, 0);
+  assert.equal(await readFile(dataFile, "utf8"), "unchanged\n");
+  const commands = await readFile(fixture.commandLog, "utf8");
+  assert.doesNotMatch(commands, /^docker /m);
+  assert.doesNotMatch(commands, /^tar /m);
+  assert.match(await readFile(fixture.tempLog, "utf8"), /could not measure free backup space/i);
 });
 
 test("upgrade cold-backs up the complete data tree with a temp archive and atomic rename", async (t) => {
