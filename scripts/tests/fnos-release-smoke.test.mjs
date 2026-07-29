@@ -173,6 +173,9 @@ for (const [name, readiness, message] of [
   ["missing status", { status: "" }, /exact three-digit HTTP status/i],
   ["duplicate status", { status: "200200" }, /exact three-digit HTTP status/i],
   ["duplicate header status", { headers: "HTTP/1.1 200 OK\r\nHTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" }, /exactly one HTTP status line/i],
+  ["tab status", { headers: "HTTP/1.1\t200 OK\r\nContent-Type: application/json\r\n\r\n" }, /exactly one HTTP status line/i],
+  ["status trailing tab", { headers: "HTTP/1.1 200 OK\t\r\nContent-Type: application/json\r\n\r\n" }, /exactly one HTTP status line/i],
+  ["invalid HTTP version", { headers: "HTTP/9.9 200 OK\r\nContent-Type: application/json\r\n\r\n" }, /exactly one HTTP status line/i],
 ]) {
   test(`rejects API readiness with ${name}`, async (t) => {
     const tools = await fakeTools(t, { readiness });
@@ -213,6 +216,11 @@ for (const [name, loginResponse, message] of [
   ["empty body", { body: "" }, /Next.*HTML markers/i],
   ["marker in comment", { body: '<!doctype html><!-- <script src="/_next/static/x.js"></script> --><html><body>SAG</body></html>' }, /Next.*HTML markers/i],
   ["marker as text", { body: "<!doctype html><html><body>/_next/static/x.js</body></html>" }, /Next.*HTML markers/i],
+  ["script href", { body: '<!doctype html><script href="/_next/static/x.js"></script>' }, /Next.*HTML markers/i],
+  ["link src", { body: '<!doctype html><link src="/_next/static/x.css">' }, /Next.*HTML markers/i],
+  ["data-src", { body: '<!doctype html><script data-src="/_next/static/x.js"></script>' }, /Next.*HTML markers/i],
+  ["data-href", { body: '<!doctype html><link data-href="/_next/static/x.css">' }, /Next.*HTML markers/i],
+  ["uppercase path", { body: '<!doctype html><script src="/_NEXT/static/x.js"></script>' }, /Next.*HTML markers/i],
   ["missing Content-Type", { headers: "HTTP/1.1 200 OK\r\n\r\n" }, /Content-Type.*text\/html/i],
   ["duplicate Content-Type", { headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Type: text/html\r\n\r\n" }, /Content-Type.*text\/html/i],
   ["curl exit", { exitCode: 7, stderr: "connection refused" }, /Web login request failed/i],

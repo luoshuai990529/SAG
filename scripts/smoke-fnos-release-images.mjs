@@ -124,10 +124,25 @@ function requireHttpEnvelope(response, operation) {
   if (!/^\d{3}$/.test(response.status)) fail(`${operation} must emit an exact three-digit HTTP status`);
   const statusLines = response.headers
     .split(/\r?\n/)
-    .map((line) => /^HTTP\/\d(?:\.\d)?\s+(\d{3})(?:\s|$)/i.exec(line))
+    .map((line) => /^HTTP\/(?:1\.0|1\.1|2|3) ([0-9]{3})(?: [\x20-\x7e]*)?$/.exec(line))
     .filter(Boolean);
   if (statusLines.length !== 1) fail(`${operation} must contain exactly one HTTP status line`);
   if (statusLines[0][1] !== response.status) fail(`${operation} header status must match curl HTTP status`);
+}
+
+function hasNextStaticAssetTag(html) {
+  const uncommented = html.replace(/<!--[\s\S]*?-->/g, "");
+  const tags = uncommented.match(/<(?:script|link)\b[^<>]*>/gi) ?? [];
+  for (const tag of tags) {
+    const name = /^<([a-z]+)/i.exec(tag)?.[1]?.toLowerCase();
+    const attributes = new Map();
+    const source = tag.replace(/^<[a-z]+\b/i, "").replace(/>$/, "");
+    const pattern = /(?:^|[\x20\r\n\t])([A-Za-z_:][A-Za-z0-9_.:-]*)[\x20\r\n\t]*=[\x20\r\n\t]*(["'])([^"'<>]*)\2/g;
+    for (const match of source.matchAll(pattern)) attributes.set(match[1].toLowerCase(), match[3]);
+    const value = name === "script" ? attributes.get("src") : name === "link" ? attributes.get("href") : undefined;
+    if (value?.startsWith("/_next/static/")) return true;
+  }
+  return false;
 }
 
 async function requireApiReady(options, attempts = 30) {
@@ -186,9 +201,7 @@ function requireWebLogin(options) {
     fail(`Web login Content-Type must be text/html, received ${contentTypes.join(", ") || "missing"}`);
   }
   const body = response.body.trim();
-  const uncommented = body.replace(/<!--[\s\S]*?-->/g, "");
-  const nextAssetTag = /<(?:script|link)\b[^>]*\b(?:src|href)\s*=\s*(["'])\/_next\/static\/[^"'<>]*\1[^>]*>/i;
-  if (!/^<!doctype html>/i.test(body) || !nextAssetTag.test(uncommented)) {
+  if (!/^<!doctype html>/i.test(body) || !hasNextStaticAssetTag(body)) {
     fail("Web login must contain stable Next HTML markers");
   }
 }
