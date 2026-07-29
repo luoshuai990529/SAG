@@ -132,14 +132,22 @@ function requireHttpEnvelope(response, operation) {
 
 function hasNextStaticAssetTag(html) {
   const uncommented = html.replace(/<!--[\s\S]*?-->/g, "");
-  const tags = uncommented.match(/<(?:script|link)\b[^<>]*>/gi) ?? [];
+  if (uncommented.includes("<!--") || uncommented.includes("--!>")) return false;
+  const tags = uncommented.match(/<(?:script|link)(?=[\x20\r\n\t/>])[^<>]*>/gi) ?? [];
   for (const tag of tags) {
-    const name = /^<([a-z]+)/i.exec(tag)?.[1]?.toLowerCase();
+    const name = /^<(script|link)(?=[\x20\r\n\t/>])/i.exec(tag)?.[1]?.toLowerCase();
     const attributes = new Map();
-    const source = tag.replace(/^<[a-z]+\b/i, "").replace(/>$/, "");
+    const source = tag.replace(/^<(?:script|link)(?=[\x20\r\n\t/>])/i, "").replace(/>$/, "");
     const pattern = /(?:^|[\x20\r\n\t])([A-Za-z_:][A-Za-z0-9_.:-]*)[\x20\r\n\t]*=[\x20\r\n\t]*(["'])([^"'<>]*)\2/g;
-    for (const match of source.matchAll(pattern)) attributes.set(match[1].toLowerCase(), match[3]);
-    const value = name === "script" ? attributes.get("src") : name === "link" ? attributes.get("href") : undefined;
+    for (const match of source.matchAll(pattern)) {
+      const key = match[1].toLowerCase();
+      const values = attributes.get(key) ?? [];
+      values.push(match[3]);
+      attributes.set(key, values);
+    }
+    const relevant = name === "script" ? attributes.get("src") : name === "link" ? attributes.get("href") : undefined;
+    if (relevant?.length !== 1) continue;
+    const [value] = relevant;
     if (value?.startsWith("/_next/static/")) return true;
   }
   return false;
