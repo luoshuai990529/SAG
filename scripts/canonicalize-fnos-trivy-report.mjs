@@ -92,14 +92,18 @@ async function main() {
   if (!Array.isArray(report.Results) || report.Results.length === 0) {
     fail("input Results must be a nonempty array");
   }
-  let reviewedOs;
+  let reviewedGate;
   try {
-    reviewedOs = JSON.parse(await readFile(gatewayPolicyPath, "utf8")).vulnerabilityGate?.os;
+    reviewedGate = JSON.parse(await readFile(gatewayPolicyPath, "utf8")).vulnerabilityGate;
   } catch (error) {
     fail(`reviewed gateway policy is unavailable or not valid JSON: ${error.message}`);
   }
+  const reviewedOs = reviewedGate?.os;
   if (!nonemptyString(reviewedOs?.family) || !nonemptyString(reviewedOs?.version)) {
     fail("reviewed gateway policy must contain operating-system family and version evidence");
+  }
+  if (!nonemptyString(reviewedGate?.expectedTarget)) {
+    fail("reviewed gateway policy must contain the exact Trivy result Target");
   }
   const expectedType = report.Metadata?.OS?.Family;
   if (!nonemptyString(expectedType) || !nonemptyString(report.Metadata?.OS?.Name)) {
@@ -113,14 +117,16 @@ async function main() {
     if (!result || typeof result !== "object" || Array.isArray(result)) {
       fail(`Results[${index}] must be an object`);
     }
+    if (result.Target !== reviewedGate.expectedTarget) {
+      fail(`Results[${index}].Target must equal the exact reviewed Target`);
+    }
     if (
-      !nonemptyString(result.Target)
-      || result.Class !== "os-pkgs"
+      result.Class !== "os-pkgs"
       || !nonemptyString(result.Type)
       || result.Type !== expectedType
     ) {
       fail(
-        `Results[${index}] must be an OS-package result with nonempty Target, Class os-pkgs, and Type ${expectedType}`,
+        `Results[${index}] must be an OS-package result with Class os-pkgs and Type ${expectedType}`,
       );
     }
     validatePackage(result, index);

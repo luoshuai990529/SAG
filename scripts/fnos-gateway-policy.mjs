@@ -175,6 +175,11 @@ export function validateGatewayPolicy(policy, now = new Date()) {
       && vulnerabilityGate.os.version.length > 0,
     "scanned operating-system evidence is required",
   );
+  const expectedResultTarget = `${exactReference} (${vulnerabilityGate.os.family} ${vulnerabilityGate.os.version})`;
+  invariant(
+    vulnerabilityGate.expectedTarget === expectedResultTarget,
+    "expectedTarget must bind the exact image reference and reviewed operating-system evidence",
+  );
   invariant(
     typeof vulnerabilityGate.sourceReportSha256 === "string"
       && /^[a-f0-9]{64}$/.test(vulnerabilityGate.sourceReportSha256),

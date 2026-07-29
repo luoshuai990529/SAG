@@ -50,6 +50,7 @@
       "family": "alpine",
       "version": "3.24.1"
     },
+    "expectedTarget": "docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46 (alpine 3.24.1)",
     "sourceReportSha256": "9fa13bd965a961408daea1d761d7a52f7ed246dc845211c1d3b51873a5b217a9"
   }
 }

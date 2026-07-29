@@ -10,6 +10,7 @@ import {
 const digest = "sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
 const revision = "ccdab6c99ae2e2fc53a144dc68d6b8f44163adf2";
 const reference = `docker.io/library/nginx:1.30.4-alpine@${digest}`;
+const expectedTarget = `${reference} (alpine 3.24.1)`;
 
 function reviewedPolicy(overrides = {}) {
   return {
@@ -53,6 +54,7 @@ function reviewedPolicy(overrides = {}) {
       fixableFindings: 0,
       imageId: `sha256:${"6".repeat(64)}`,
       os: { family: "alpine", version: "3.24.1" },
+      expectedTarget,
       sourceReportSha256: "9".repeat(64),
     },
     ...overrides,
@@ -121,6 +123,26 @@ test("rejects scanner approval without exact artifact evidence", () => {
     () => validateGatewayPolicy(policy, new Date("2026-07-30T12:00:00Z")),
     /source report sha-256/i,
   );
+});
+
+test("rejects missing or mismatched exact Trivy result target evidence", () => {
+  for (const target of [
+    undefined,
+    reference,
+    `${expectedTarget}-suffix`,
+    expectedTarget.toUpperCase(),
+  ]) {
+    const policy = reviewedPolicy({
+      vulnerabilityGate: {
+        ...reviewedPolicy().vulnerabilityGate,
+        expectedTarget: target,
+      },
+    });
+    assert.throws(
+      () => validateGatewayPolicy(policy, new Date("2026-07-30T12:00:00Z")),
+      /expectedTarget|result target/i,
+    );
+  }
 });
 
 test("accepts one millisecond before expiry and rejects the exact expiry instant", () => {

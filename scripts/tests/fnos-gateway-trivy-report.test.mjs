@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const canonicalizer = path.join(repoRoot, "scripts/canonicalize-fnos-trivy-report.mjs");
+const reference = "docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
+const expectedTarget = `${reference} (alpine 3.24.1)`;
 
 async function fixture(t, report) {
   const root = await mkdtemp(path.join(os.tmpdir(), "sag-trivy-canonical-"));
@@ -53,7 +55,7 @@ function reportWithResult(overrides = {}) {
       OS: { Family: "alpine", Name: "3.24.1" },
     },
     Results: [{
-      Target: "nginx (alpine 3.24.1)",
+      Target: expectedTarget,
       Class: "os-pkgs",
       Type: "alpine",
       Packages: [validPackage()],
@@ -95,6 +97,21 @@ test("rejects OS evidence that differs from the reviewed Alpine policy", async (
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /reviewed.*operating-system|operating-system.*reviewed/i);
     await assert.rejects(access(output));
+  }
+});
+
+test("rejects any Trivy result target other than the exact reviewed target", async (t) => {
+  for (const target of [
+    "nginx (alpine 3.24.1)",
+    `prefix-${expectedTarget}`,
+    `${expectedTarget}-suffix`,
+    expectedTarget.toUpperCase(),
+  ]) {
+    const { input, output } = await fixture(t, reportWithResult({ Target: target }));
+    const result = run(input, output, 0);
+    assert.notEqual(result.status, 0, target);
+    assert.match(result.stderr, /exact reviewed Target/i, target);
+    await assert.rejects(access(output), target);
   }
 });
 

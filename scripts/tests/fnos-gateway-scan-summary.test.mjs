@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const summarizer = path.join(repoRoot, "scripts/summarize-fnos-gateway-scan.mjs");
 const reference = "docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
+const expectedTarget = `${reference} (alpine 3.24.1)`;
 
 function validPackage(overrides = {}) {
   return {
@@ -43,7 +44,7 @@ function completeReport(overrides = {}) {
       RepoDigests: ["nginx@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46"],
     },
     Results: [{
-      Target: "nginx",
+      Target: expectedTarget,
       Class: "os-pkgs",
       Type: "alpine",
       Packages: [validPackage()],
@@ -99,7 +100,7 @@ test("refuses to summarize a report containing a vulnerability finding", async (
   const finding = validVulnerability();
   const contents = completeReport({
     Results: [{
-      Target: "nginx",
+      Target: expectedTarget,
       Class: "os-pkgs",
       Type: "alpine",
       Packages: [validPackage()],
@@ -172,7 +173,7 @@ test("rejects incomplete Trivy report structure and still writes failure evidenc
 test("rejects a result that omits the explicit Vulnerabilities property", async (t) => {
   const reportObject = completeReport({
     Results: [{
-      Target: "nginx",
+      Target: expectedTarget,
       Class: "os-pkgs",
       Type: "alpine",
       Packages: [validPackage()],
@@ -200,7 +201,7 @@ test("rejects invalid OS-package evidence even with explicit null vulnerabilitie
   ];
   for (const [name, resultOverrides] of cases) {
     const result = {
-      Target: "nginx",
+      Target: expectedTarget,
       Class: "os-pkgs",
       Type: "alpine",
       Packages: [validPackage()],
@@ -220,6 +221,31 @@ test("rejects invalid OS-package evidence even with explicit null vulnerabilitie
       /OS-package|Packages|package|Target|Class|Type/i,
       name,
     );
+  }
+});
+
+test("rejects any Trivy result target other than the exact reviewed target", async (t) => {
+  for (const target of [
+    "nginx",
+    `prefix-${expectedTarget}`,
+    `${expectedTarget}-suffix`,
+    expectedTarget.toUpperCase(),
+  ]) {
+    const { report, output } = await fixture(t, JSON.stringify(completeReport({
+      Results: [{
+        Target: target,
+        Class: "os-pkgs",
+        Type: "alpine",
+        Packages: [validPackage()],
+        Vulnerabilities: null,
+      }],
+    })));
+    const execution = summarize(report, output);
+    assert.notEqual(execution.status, 0, target);
+    const evidence = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(evidence.scan.result, "failed", target);
+    assert.equal(evidence.scan.fixableHighCriticalFindings, null, target);
+    assert.match(evidence.scan.failureReasons.join("\n"), /exact reviewed Target/i, target);
   }
 });
 
@@ -256,7 +282,7 @@ test("rejects malformed explicit vulnerability values", async (t) => {
   for (const [name, vulnerabilities, expected] of cases) {
     const { report, output } = await fixture(t, JSON.stringify(completeReport({
       Results: [{
-        Target: "nginx",
+        Target: expectedTarget,
         Class: "os-pkgs",
         Type: "alpine",
         Packages: [validPackage()],

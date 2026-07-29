@@ -101,15 +101,18 @@ function inspectReport(report, policy, reasons) {
       findingsKnown = false;
       continue;
     }
+    if (result.Target !== policy.vulnerabilityGate.expectedTarget) {
+      reasons.push(`report Results[${index}].Target must equal the exact reviewed Target`);
+      findingsKnown = false;
+    }
     if (
-      !nonemptyString(result.Target)
-      || result.Class !== "os-pkgs"
+      result.Class !== "os-pkgs"
       || !nonemptyString(result.Type)
       || result.Type !== policy.vulnerabilityGate.os.family
       || result.Type !== os?.Family
     ) {
       reasons.push(
-        `report Results[${index}] must be an OS-package result with nonempty Target, Class os-pkgs, and reviewed Type`,
+        `report Results[${index}] must be an OS-package result with Class os-pkgs and reviewed Type`,
       );
       findingsKnown = false;
     }
