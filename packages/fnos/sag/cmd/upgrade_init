@@ -10,8 +10,12 @@ data_dir="${TRIM_PKGVAR}/data"
 backup_dir="${TRIM_PKGVAR}/backup"
 compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
 
-if ! mkdir -p "${data_dir}" "${backup_dir}"; then
-    log_error "SAG upgrade could not prepare its backup directories."
+if [ ! -d "${data_dir}" ]; then
+    log_error "SAG upgrade aborted: the active data directory is missing."
+    exit 1
+fi
+if ! mkdir -p "${backup_dir}"; then
+    log_error "SAG upgrade could not prepare its backup directory."
     exit 1
 fi
 
@@ -53,11 +57,11 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+services_stopped=1
 if ! docker compose -f "${compose_file}" stop >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
     log_error "SAG upgrade could not stop services for a cold backup."
     exit 1
 fi
-services_stopped=1
 
 if ! tar -C "${TRIM_PKGVAR}" -czf "${archive_temp}" data >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
     log_error "SAG upgrade backup archive failed; active data was not changed."

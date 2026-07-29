@@ -42,6 +42,9 @@ if [ "\${1:-}" = inspect ]; then
     *) exit 2 ;;
   esac
 fi
+if [ "\${1:-}" = compose ] && [ "\${4:-}" = stop ]; then
+  exit "\${FAKE_DOCKER_STOP_EXIT:-0}"
+fi
 exit "\${FAKE_DOCKER_EXIT:-0}"
   `);
   await writeCommand(binDir, "curl", `
@@ -118,6 +121,18 @@ test("install creates private directories and an idempotent mode-0600 random sec
   assert.equal((await stat(envFile)).mode & 0o777, 0o600);
 });
 
+test("install rejects an existing malformed secret without overwriting it", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const envFile = path.join(fixture.pkgEtc, "sag.env");
+  await writeFile(envFile, "SAG_SECRET_KEY=weak\n");
+
+  const result = runScript("install_callback", fixture.env);
+
+  assert.notEqual(result.status, 0);
+  assert.equal(await readFile(envFile, "utf8"), "SAG_SECRET_KEY=weak\n");
+  assert.match(await readFile(fixture.tempLog, "utf8"), /invalid existing secret/i);
+});
+
 test("status is running only when gateway state and health plus API readiness pass", async (t) => {
   const fixture = await lifecycleFixture(t);
   const healthy = runScript("main", fixture.env, ["status"]);
@@ -153,6 +168,19 @@ test("upgrade refuses insufficient free space before stopping services or touchi
   assert.doesNotMatch(commands, /^docker /m);
   assert.doesNotMatch(commands, /^tar /m);
   assert.match(await readFile(fixture.tempLog, "utf8"), /insufficient free space/i);
+});
+
+test("upgrade refuses a missing active data tree without creating it", async (t) => {
+  const fixture = await lifecycleFixture(t);
+
+  const result = runScript("upgrade_init", fixture.env);
+
+  assert.notEqual(result.status, 0);
+  await assert.rejects(stat(path.join(fixture.pkgVar, "data")), { code: "ENOENT" });
+  const commands = await readFile(fixture.commandLog, "utf8");
+  assert.doesNotMatch(commands, /^docker /m);
+  assert.doesNotMatch(commands, /^tar /m);
+  assert.match(await readFile(fixture.tempLog, "utf8"), /active data directory is missing/i);
 });
 
 test("upgrade cold-backs up the complete data tree with a temp archive and atomic rename", async (t) => {
@@ -192,6 +220,20 @@ test("failed archive creation preserves active data and leaves no partial backup
   assert.match(commands, /docker compose .* stop/);
   assert.match(commands, /docker compose .* start/);
   assert.match(await readFile(fixture.tempLog, "utf8"), /backup archive failed/i);
+});
+
+test("a partially failing Compose stop still triggers best-effort service recovery", async (t) => {
+  const fixture = await lifecycleFixture(t, { FAKE_DOCKER_STOP_EXIT: "9" });
+  await mkdir(path.join(fixture.pkgVar, "data"), { recursive: true });
+
+  const result = runScript("upgrade_init", fixture.env);
+
+  assert.notEqual(result.status, 0);
+  const commands = await readFile(fixture.commandLog, "utf8");
+  assert.match(commands, /docker compose .* stop/);
+  assert.match(commands, /docker compose .* start/);
+  assert.doesNotMatch(commands, /^tar /m);
+  assert.match(await readFile(fixture.tempLog, "utf8"), /could not stop services/i);
 });
 
 test("uninstall retains data by default and deletes it only after explicit selection", async (t) => {

@@ -47,6 +47,27 @@ if [ ! -f "${secret_file}" ]; then
     exit 1
 fi
 
+existing_secret_line="$(cat "${secret_file}")" || {
+    log_error "SAG installation could not read its existing secret."
+    exit 1
+}
+case "${existing_secret_line}" in
+SAG_SECRET_KEY=*)
+    existing_secret="${existing_secret_line#SAG_SECRET_KEY=}"
+    ;;
+*)
+    existing_secret=""
+    ;;
+esac
+case "${existing_secret}" in
+    *[!0-9a-f]*|'') valid_existing_secret=false ;;
+    *) valid_existing_secret=true ;;
+esac
+if [ "${valid_existing_secret}" != true ] || [ "${#existing_secret}" -ne 64 ]; then
+    log_error "SAG installation found an invalid existing secret; refusing to overwrite it."
+    exit 1
+fi
+
 chmod 600 "${secret_file}" || {
     log_error "SAG installation could not protect its secret key."
     exit 1
