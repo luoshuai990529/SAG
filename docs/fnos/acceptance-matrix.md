@@ -62,7 +62,7 @@
 
 | ID | 门禁 | 当前结论 |
 | --- | --- | --- |
-| REL-01 | GHCR API/Web 公开多架构镜像 | 阻塞：仅 `luoshuai990529/SAG@main` 可手动运行候选工作流；它必须先完成 CI、本地 amd64 smoke、唯一 staging index 与元数据检查，再按已记录 digest 对账式提升候选/commit 标签（缺失创建、同 digest 接受、不同 digest 失败）。这不是 registry 级不可变声明，包仍须固定 digest。当前尚未发布，包不可匿名检查。 |
+| REL-01 | GHCR API/Web 公开多架构镜像 | 阻塞：仅 `luoshuai990529/SAG@main` 可手动运行候选工作流；它必须先完成 CI、本地 amd64 smoke、唯一 staging index 与元数据检查，再按已记录 digest 对账式提升候选/commit 标签（缺失创建、同 digest 接受、不同 digest 失败）。验收证据还必须记录运行产生的四个最终 digest，并确认发布期间 GHCR package 仅由该流程独占写入；并发锁和 postcheck 不能替代此控制。这不是 registry 级不可变声明，包仍须固定 digest。当前尚未发布，包不可匿名检查。 |
 | REL-02 | x86-64 fnOS 实机 | 待执行：VM 结果不能替代实机认证 |
 | REL-03 | ARM64 fnOS 实机 | 不适用：本候选包声明 x86；正式声明 ARM64 支持前必须新增实机认证 |
 | REL-04 | 飞牛应用中心上架 | 待执行：发布材料、审核和平台反馈属于候选版之后的门禁 |

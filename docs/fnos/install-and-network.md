@@ -125,11 +125,13 @@ staging tag，而是对四个最终引用逐个对账：缺失则创建，已指
 镜像构建成功不等于 ARM64 fnOS 已认证。
 
 预提升失败可以重新运行：新的 run attempt 使用新的 staging 标签；部分 promotion
-重试时会补齐缺失且同一 release digest 的最终标签，但绝不改写不同 digest。流程
-会尽量缩小并发窗口，仍不能声明 GHCR 已在 registry 层强制 tag 不可变，因此 fnOS
-包必须继续固定 digest。staging 标签不会由工作流按 digest 删除，因为删除 digest
-可能误删已提升内容；仅可使用能够精确删除单个 tag 的受控 GHCR 操作清理，并保留
-审计记录。
+重试会补齐缺失且同一 release digest 的最终标签，并拒绝流程自身观察到的不同 digest。
+同一候选版本的并发设置只会串行化本工作流；最小权限、创建前复查和最终 postcheck
+只能缩小或发现竞争，不能阻止外部 GHCR writer 在这些检查之外改写 tag。因此发布验收
+必须具备该 package 的独占写入控制，并记录实际 registry 运行的四个最终 digest；fnOS
+包也必须继续固定 digest。staging 标签不会由工作流按 digest 删除，因为删除 digest
+可能误删已提升内容；仅可使用能够精确删除单个 tag 的受控 GHCR 操作清理，并保留审计
+记录。
 
 可复用 CI 会运行发布 Compose、包行为、生命周期和文档测试，但不会下载未经
 校验的 Linux `fnpack` 可执行文件。`fnpack build` 结构测试只在预先验证了官方

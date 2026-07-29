@@ -164,6 +164,9 @@ jobs:
       CANDIDATE_VERSION: ${{ needs.candidate.outputs.version }}
       STAGING_TAG: ${{ needs.candidate.outputs.staging_tag }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
         with:
@@ -175,30 +178,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          resolve_verified_digest() {
-            local image="$1"
-            local digest
-            digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$image:$STAGING_TAG")"
-            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
-              echo "::error::Staging tag $image:$STAGING_TAG did not resolve to a sha256 digest."
-              exit 1
-            }
-            docker buildx imagetools inspect --raw "$image@$digest" | jq -e '
-              .mediaType as $type
-              | ($type == "application/vnd.oci.image.index.v1+json" or $type == "application/vnd.docker.distribution.manifest.list.v2+json")
-              and ([.manifests[].platform | select(.os == "linux" and .architecture == "amd64")] | length > 0)
-              and ([.manifests[].platform | select(.os == "linux" and .architecture == "arm64")] | length > 0)
-            ' >/dev/null
-            docker pull --platform linux/amd64 "$image@$digest"
-            test "$(docker image inspect "$image@$digest" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$GITHUB_SHA"
-            test "$(docker image inspect "$image@$digest" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')" = "$CANDIDATE_VERSION"
-            printf '%s\n' "$digest"
-          }
-          api_digest="$(resolve_verified_digest ghcr.io/luoshuai990529/sag-api)"
-          web_digest="$(resolve_verified_digest ghcr.io/luoshuai990529/sag-web)"
-          printf 'api_digest=%s\n' "$api_digest" >> "$GITHUB_OUTPUT"
-          printf 'web_digest=%s\n' "$web_digest" >> "$GITHUB_OUTPUT"
-          printf '{"api_digest":"%s","web_digest":"%s"}\n' "$api_digest" "$web_digest" > verified-digests.json
+          api_digest="$(node scripts/fnos-release-registry.mjs verify-staging --docker docker --image ghcr.io/luoshuai990529/sag-api --staging-tag "$STAGING_TAG" --revision "$GITHUB_SHA" --version "$CANDIDATE_VERSION")"
+          web_digest="$(node scripts/fnos-release-registry.mjs verify-staging --docker docker --image ghcr.io/luoshuai990529/sag-web --staging-tag "$STAGING_TAG" --revision "$GITHUB_SHA" --version "$CANDIDATE_VERSION")"
+          node scripts/fnos-release-registry.mjs write-handoff --api-digest "$api_digest" --web-digest "$web_digest" --github-output "$GITHUB_OUTPUT" --artifact verified-digests.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: fnos-verified-digests-${{ github.run_id }}-${{ github.run_attempt }}
@@ -223,6 +205,9 @@ jobs:
       API_DIGEST: ${{ needs.inspect-staging.outputs.api_digest }}
       WEB_DIGEST: ${{ needs.inspect-staging.outputs.web_digest }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
         with:
@@ -233,84 +218,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          require_digest() {
-            [[ "$1" =~ ^sha256:[a-f0-9]{64}$ ]] || {
-              echo "::error::Expected a verified sha256 digest, received $1."
-              exit 1
-            }
-          }
-          inspect_final_tag() {
-            local reference="$1"
-            local output status
-            set +e
-            output="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$reference" 2>&1)"
-            status=$?
-            set -e
-            if [ "$status" -eq 0 ]; then
-              [[ "$output" =~ ^sha256:[a-f0-9]{64}$ ]] || {
-                echo "::error::Final tag $reference resolved to an invalid digest: $output" >&2
-                return 1
-              }
-              printf '%s\n' "$output"
-              return 0
-            fi
-            if grep -Eiq 'manifest unknown|name unknown|manifest .* not found|not found: manifest' <<< "$output"; then
-              return 10
-            fi
-            echo "::error::Could not inspect final tag $reference: $output" >&2
-            return 1
-          }
-          reconcile_tag() {
-            local image="$1"
-            local tag="$2"
-            local expected="$3"
-            local reference="$image:$tag"
-            local actual status
-            set +e
-            actual="$(inspect_final_tag "$reference")"
-            status=$?
-            set -e
-            if [ "$status" -eq 0 ]; then
-              [ "$actual" = "$expected" ] || {
-                echo "::error::Final tag $reference exists but points to a different digest ($actual)." >&2
-                return 1
-              }
-              return 0
-            fi
-            [ "$status" -eq 10 ] || return "$status"
-            # Recheck immediately before creating an absent tag to narrow races.
-            set +e
-            actual="$(inspect_final_tag "$reference")"
-            status=$?
-            set -e
-            if [ "$status" -eq 0 ]; then
-              [ "$actual" = "$expected" ] || {
-                echo "::error::Final tag $reference appeared with a different digest ($actual)." >&2
-                return 1
-              }
-              return 0
-            fi
-            [ "$status" -eq 10 ] || return "$status"
-            docker buildx imagetools create --tag "$reference" "$image@$expected"
-          }
-          post_verify_tag() {
-            local reference="$1"
-            local expected="$2"
-            local actual
-            actual="$(inspect_final_tag "$reference")" || return 1
-            [ "$actual" = "$expected" ] || {
-              echo "::error::Post-verify final tag $reference does not resolve to $expected." >&2
-              return 1
-            }
-          }
-          require_digest "$API_DIGEST"
-          require_digest "$WEB_DIGEST"
-          reconcile_tag ghcr.io/luoshuai990529/sag-api "$CANDIDATE_VERSION" "$API_DIGEST"
-          reconcile_tag ghcr.io/luoshuai990529/sag-api "$COMMIT_TAG" "$API_DIGEST"
-          reconcile_tag ghcr.io/luoshuai990529/sag-web "$CANDIDATE_VERSION" "$WEB_DIGEST"
-          reconcile_tag ghcr.io/luoshuai990529/sag-web "$COMMIT_TAG" "$WEB_DIGEST"
-          echo "Post-verify all final tags"
-          post_verify_tag "ghcr.io/luoshuai990529/sag-api:$CANDIDATE_VERSION" "$API_DIGEST"
-          post_verify_tag "ghcr.io/luoshuai990529/sag-api:$COMMIT_TAG" "$API_DIGEST"
-          post_verify_tag "ghcr.io/luoshuai990529/sag-web:$CANDIDATE_VERSION" "$WEB_DIGEST"
-          post_verify_tag "ghcr.io/luoshuai990529/sag-web:$COMMIT_TAG" "$WEB_DIGEST"
+          node scripts/fnos-release-registry.mjs promote --docker docker --api-image ghcr.io/luoshuai990529/sag-api --web-image ghcr.io/luoshuai990529/sag-web --candidate-version "$CANDIDATE_VERSION" --commit-tag "$COMMIT_TAG" --api-digest "$API_DIGEST" --web-digest "$WEB_DIGEST"
