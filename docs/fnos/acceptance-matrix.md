@@ -51,10 +51,11 @@
 | BIZ-03 | MCP URL 和转发头 | 待执行 | `/mcp/` 同源，Host/X-Forwarded-* 正确 | `docs/fnos/evidence/<date>/biz-03/` |
 | DATA-01 | 停止/启动、容器重建、fnOS 重启数据保留 | 待执行 | 用户、SQLite、LanceDB、上传原文和索引均保留 | `docs/fnos/evidence/<date>/data-01/` |
 | DATA-02 | 完整冷备恢复到新实例 | 待执行 | 恢复完整 `/data`，旧文档可检索和打开 | `docs/fnos/evidence/<date>/data-02/` |
-| UPG-01 | `1.4.0-fnos.0 -> 1.4.0-fnos.1` | 待执行 | 备份空间门禁、冷备、升级、旧知识库检索 | `docs/fnos/evidence/<date>/upg-01/` |
+| PATH-01 | 生命周期 callback 路径信任链与最终 bind source | 待执行 | 在 UPG-01、UN-02 前记录 callback EUID/EGID；逐级记录所有能替换 `${TRIM_PKGVAR}`、`data`、`backup` 的祖先目录所有者及组/其他用户写权限；记录 `docker compose config` 解析结果和实际容器最终 bind source。脱敏证据必须保留为 `summary.md` 和 `command.log` | `docs/fnos/evidence/<date>/path-01/` |
+| UPG-01 | `1.4.0-fnos.0 -> 1.4.0-fnos.1` | 待执行 | 前置 PATH-01 通过；备份空间门禁、冷备、升级、旧知识库检索 | `docs/fnos/evidence/<date>/upg-01/` |
 | UPG-02 | 模拟失败与回滚 | 待执行 | 活动数据不损坏，完整数据与匹配镜像一起回滚 | `docs/fnos/evidence/<date>/upg-02/` |
 | UN-01 | 默认保留卸载并重装恢复 | 待执行 | 先确认 fnOS 是否清理私有运行目录；必要时使用外部保留副本 | `docs/fnos/evidence/<date>/un-01/` |
-| UN-02 | 明确删除数据卸载 | 待执行 | 仅显式选择后删除；执行前二次确认外部备份 | `docs/fnos/evidence/<date>/un-02/` |
+| UN-02 | 明确删除数据卸载 | 待执行 | 前置 PATH-01 通过；仅显式选择后删除；执行前二次确认外部备份 | `docs/fnos/evidence/<date>/un-02/` |
 | PERF-01 | 4 GB 轻量档无 OOM | 待执行 | 并发 1/2、缓存 4、预热 1；完整业务流程无 OOMKilled | `docs/fnos/evidence/<date>/perf-01/` |
 
 ## 正式发布门禁

@@ -25,18 +25,21 @@ true)
                 printf '%s\n' "SAG uninstall rejected unsafe ${label} mount source." >> "${TRIM_TEMP_LOGFILE}"
                 return 1
             fi
-            resolved="$(canonical_dir "${candidate}")" || return 1
+            resolved="$(canonical_dir "${candidate}")" || {
+                printf '%s\n' "SAG uninstall could not resolve ${label} mount source; verify callback identity and execute permission on the full ancestor chain." >> "${TRIM_TEMP_LOGFILE}"
+                return 1
+            }
             if [ "${resolved}" != "${candidate}" ]; then
                 printf '%s\n' "SAG uninstall rejected unsafe noncanonical ${label} mount source." >> "${TRIM_TEMP_LOGFILE}"
                 return 1
             fi
         }
         validate_owned_canonical_dir "${pkgvar_dir}" "package parent" || exit 1
+        validate_owned_canonical_dir "${data_dir}" "data" || exit 1
         chmod 700 "${pkgvar_dir}" || {
             printf '%s\n' "SAG uninstall could not protect its private package parent." >> "${TRIM_TEMP_LOGFILE}"
             exit 1
         }
-        validate_owned_canonical_dir "${data_dir}" "data" || exit 1
         chmod 700 "${data_dir}" || {
             printf '%s\n' "SAG uninstall could not protect its private mount parents." >> "${TRIM_TEMP_LOGFILE}"
             exit 1

@@ -32,7 +32,7 @@
 
 helper 分为只读测量、只读数据/可写备份和可写删除三个 Compose profile 服务，均复用已固定 digest 的 API 镜像，关闭网络、使用只读根文件系统、启用 `no-new-privileges`、先移除全部 capabilities，再仅加入读取/处理 API root 所有文件所需的 `DAC_OVERRIDE`。调用前脚本拒绝符号链接、非绝对或非规范化的 `${TRIM_PKGVAR}`、`data` 和 `backup` 来源；在修改已有叶目录前完成检查，并把包私有父目录设为 `0700`，防止无关普通用户替换挂载源。
 
-这些脚本只验证包私有父目录及叶目录本身的所有者和规范路径，不验证从文件系统根到 `${TRIM_PKGVAR}` 的每一级祖先目录。路径检查与后续 `chmod`、Docker bind mount 之间也仍有 TOCTOU 窗口。因此信任边界必须包括 callback 的运行身份、同一 UID 的其他进程，以及任何能在祖先目录中重命名或替换路径组件的主体，而不只是特权 root。目标设备验收必须确认实际 callback 身份，并逐级检查祖先目录的所有者和组/其他用户写权限，同时复核 Docker 最终挂载源；如果这条祖先信任链不能成立，不应启用自动备份或明确删除。
+这些脚本只验证包私有父目录及叶目录本身的所有者和规范路径，不验证从文件系统根到 `${TRIM_PKGVAR}` 的每一级祖先目录。路径检查与后续 `chmod`、Docker bind mount 之间也仍有 TOCTOU 窗口。因此信任边界必须包括 callback 的运行身份、同一 UID 的其他进程，以及任何能在祖先目录中重命名或替换路径组件的主体，而不只是特权 root。目标设备必须先通过验收矩阵的 PATH-01：确认 callback EUID/EGID，逐级检查所有可替换 `${TRIM_PKGVAR}`、`data`、`backup` 的祖先目录所有者及组/其他用户写权限，并复核 Compose 解析结果和容器最终 bind source。脱敏结果按证据目录约定保留在 `docs/fnos/evidence/<date>/path-01/summary.md` 和同目录 `command.log`；如果这条祖先信任链不能成立，不应执行自动升级备份或明确删除。
 
 升级前仍应把最近一次冷备复制到应用私有运行目录之外。fnOS 卸载时是否自动清理 `${TRIM_PKGVAR}` 需要在目标设备实测，不能把同目录备份当作唯一副本。
 

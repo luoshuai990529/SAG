@@ -22,33 +22,44 @@ normalize_trailing_slashes() {
 
 validate_owned_canonical_dir() {
     candidate="$1"
+    label="$2"
+    case "${candidate}" in
+        /*) ;;
+        *)
+            log_error "SAG installation rejected unsafe ${label}: path is not absolute."
+            return 1
+            ;;
+    esac
     if [ ! -d "${candidate}" ] || [ -L "${candidate}" ] || [ ! -O "${candidate}" ]; then
-        log_error "SAG installation rejected an unsafe private directory."
+        log_error "SAG installation rejected unsafe ${label}; verify it is an owned real directory."
         return 1
     fi
-    resolved="$(canonical_dir "${candidate}")" || return 1
+    resolved="$(canonical_dir "${candidate}")" || {
+        log_error "SAG installation could not resolve ${label}; verify callback identity and execute permission on the full ancestor chain."
+        return 1
+    }
     if [ "${resolved}" != "${candidate}" ]; then
-        log_error "SAG installation rejected an unsafe noncanonical private directory."
+        log_error "SAG installation rejected unsafe noncanonical ${label}."
         return 1
     fi
 }
 
 pkgvar_dir="$(normalize_trailing_slashes "${TRIM_PKGVAR}")"
 pkgetc_dir="$(normalize_trailing_slashes "${TRIM_PKGETC}")"
-for private_parent in "${pkgvar_dir}" "${pkgetc_dir}"; do
-    case "${private_parent}" in
-        /*) ;;
-        *) log_error "SAG installation rejected an unsafe non-absolute private parent."; exit 1 ;;
-    esac
-    if ! validate_owned_canonical_dir "${private_parent}"; then
-        log_error "SAG installation rejected an unsafe private parent."
-        exit 1
-    fi
-done
+data_dir="${pkgvar_dir}/data"
+backup_dir="${pkgvar_dir}/backup"
 
-for private_child in "${pkgvar_dir}/data" "${pkgvar_dir}/backup"; do
+validate_owned_canonical_dir "${pkgvar_dir}" "package variable directory" || exit 1
+validate_owned_canonical_dir "${pkgetc_dir}" "package configuration directory" || exit 1
+
+for private_child in "${data_dir}" "${backup_dir}"; do
+    if [ "${private_child}" = "${data_dir}" ]; then
+        private_label="active data directory"
+    else
+        private_label="backup directory"
+    fi
     if [ -L "${private_child}" ] || [ -e "${private_child}" ]; then
-        validate_owned_canonical_dir "${private_child}" || exit 1
+        validate_owned_canonical_dir "${private_child}" "${private_label}" || exit 1
     fi
 done
 
@@ -56,14 +67,19 @@ if ! chmod 700 "${pkgvar_dir}" "${pkgetc_dir}"; then
     log_error "SAG installation could not protect its private parents."
     exit 1
 fi
-for private_child in "${pkgvar_dir}/data" "${pkgvar_dir}/backup"; do
+for private_child in "${data_dir}" "${backup_dir}"; do
+    if [ "${private_child}" = "${data_dir}" ]; then
+        private_label="active data directory"
+    else
+        private_label="backup directory"
+    fi
     if [ ! -e "${private_child}" ] && ! mkdir -- "${private_child}"; then
         log_error "SAG installation could not create its private directories."
         exit 1
     fi
-    validate_owned_canonical_dir "${private_child}" || exit 1
+    validate_owned_canonical_dir "${private_child}" "${private_label}" || exit 1
 done
-if ! chmod 700 "${pkgvar_dir}/data" "${pkgvar_dir}/backup"; then
+if ! chmod 700 "${data_dir}" "${backup_dir}"; then
     log_error "SAG installation could not protect its private directories."
     exit 1
 fi

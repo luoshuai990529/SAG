@@ -375,6 +375,35 @@ test("install accepts a trailing slash in TRIM_PKGVAR", async (t) => {
   assert.equal((await stat(path.join(fixture.pkgVar, "data"))).isDirectory(), true);
   assert.equal((await stat(path.join(fixture.pkgVar, "backup"))).isDirectory(), true);
 });
+
+test("install logs an actionable error when active data canonical resolution fails", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const dataDir = path.join(fixture.pkgVar, "data");
+  const backupDir = path.join(fixture.pkgVar, "backup");
+  await mkdir(dataDir);
+  await mkdir(backupDir);
+  await chmod(dataDir, 0o000);
+  const pkgVarMode = (await stat(fixture.pkgVar)).mode & 0o777;
+  const backupMode = (await stat(backupDir)).mode & 0o777;
+
+  let result;
+  try {
+    result = runScript("install_callback", fixture.env);
+  } finally {
+    await chmod(dataDir, 0o700);
+  }
+
+  assert.notEqual(result.status, 0);
+  assert.match(
+    await readFile(fixture.tempLog, "utf8"),
+    /could not resolve active data directory.*callback identity.*ancestor/i,
+  );
+  assert.equal((await stat(fixture.pkgVar)).mode & 0o777, pkgVarMode);
+  assert.equal((await stat(backupDir)).mode & 0o777, backupMode);
+  assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /^docker /m);
+  await assert.rejects(stat(path.join(fixture.pkgEtc, "sag.env")), { code: "ENOENT" });
+});
+
 test("install rejects an existing malformed secret without overwriting it", async (t) => {
   const fixture = await lifecycleFixture(t);
   const envFile = path.join(fixture.pkgEtc, "sag.env");
@@ -670,6 +699,35 @@ test("explicit uninstall accepts a trailing slash in TRIM_PKGVAR", async (t) => 
   assert.equal(result.status, 0, result.stderr);
   await assert.rejects(stat(path.join(fixture.pkgVar, "data")), { code: "ENOENT" });
   assert.match(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=delete/);
+});
+
+test("explicit uninstall logs an actionable error when data canonical resolution fails", async (t) => {
+  const fixture = await lifecycleFixture(t);
+  const dataDir = path.join(fixture.pkgVar, "data");
+  const dataFile = path.join(dataDir, "keep.txt");
+  await mkdir(dataDir);
+  await writeFile(dataFile, "preserve me\n");
+  await chmod(dataDir, 0o000);
+  const pkgVarMode = (await stat(fixture.pkgVar)).mode & 0o777;
+
+  let result;
+  try {
+    result = runScript("uninstall_callback", {
+      ...fixture.env,
+      SAG_DELETE_DATA: "true",
+    });
+  } finally {
+    await chmod(dataDir, 0o700);
+  }
+
+  assert.notEqual(result.status, 0);
+  assert.match(
+    await readFile(fixture.tempLog, "utf8"),
+    /could not resolve data mount source.*callback identity.*ancestor/i,
+  );
+  assert.equal((await stat(fixture.pkgVar)).mode & 0o777, pkgVarMode);
+  assert.equal(await readFile(dataFile, "utf8"), "preserve me\n");
+  assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /^docker /m);
 });
 
 test("explicit uninstall delegates non-writable nested data deletion to the pinned lifecycle helper", async (t) => {

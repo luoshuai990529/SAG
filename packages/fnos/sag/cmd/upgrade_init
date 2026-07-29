@@ -26,7 +26,7 @@ validate_owned_canonical_dir() {
         return 1
     fi
     resolved="$(canonical_dir "${candidate}")" || {
-        log_error "SAG upgrade could not resolve ${label} mount source."
+        log_error "SAG upgrade could not resolve ${label} mount source; verify callback identity and execute permission on the full ancestor chain."
         return 1
     }
     if [ "${resolved}" != "${candidate}" ]; then
