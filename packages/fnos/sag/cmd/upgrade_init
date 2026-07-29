@@ -6,6 +6,8 @@ log_error() {
     printf '%s\n' "$1" >> "${TRIM_TEMP_LOGFILE}"
 }
 
+umask 077
+
 data_dir="${TRIM_PKGVAR}/data"
 backup_dir="${TRIM_PKGVAR}/backup"
 compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
@@ -18,13 +20,14 @@ if ! mkdir -p "${backup_dir}"; then
     log_error "SAG upgrade could not prepare its backup directory."
     exit 1
 fi
-
-du_output="$(du -sk "${data_dir}" 2>> "${TRIM_TEMP_LOGFILE}")" || {
-    log_error "SAG upgrade could not measure the active data tree."
+if ! chmod 700 "${data_dir}" "${backup_dir}"; then
+    log_error "SAG upgrade could not protect its private data and backup directories."
     exit 1
-}
-data_kib="$(awk 'NR == 1 {print $1}' <<< "${du_output}")" || {
-    log_error "SAG upgrade could not parse the active data measurement."
+fi
+
+data_kib="$(docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
+    -e SAG_LIFECYCLE_ACTION=size lifecycle /opt/sag-lifecycle.py 2>> "${TRIM_TEMP_LOGFILE}")" || {
+    log_error "SAG upgrade could not measure the active data tree."
     exit 1
 }
 df_output="$(df -Pk "${backup_dir}" 2>> "${TRIM_TEMP_LOGFILE}")" || {
@@ -36,9 +39,15 @@ available_kib="$(awk 'NR == 2 {print $4}' <<< "${df_output}")" || {
     exit 1
 }
 
-case "${data_kib}:${available_kib}" in
-    *[!0-9:]*|:*)
-        log_error "SAG upgrade received invalid disk-space measurements."
+case "${data_kib}" in
+    ''|*[!0-9]*)
+        log_error "SAG upgrade received an invalid active data size."
+        exit 1
+        ;;
+esac
+case "${available_kib}" in
+    ''|*[!0-9]*)
+        log_error "SAG upgrade received invalid available backup space."
         exit 1
         ;;
 esac
@@ -50,28 +59,37 @@ if [ "${available_kib}" -lt "${required_kib}" ]; then
     exit 1
 fi
 
+running_ids="$(docker compose -f "${compose_file}" ps --status running -q 2>> "${TRIM_TEMP_LOGFILE}")" || {
+    log_error "SAG upgrade could not determine whether this hook must recover running services."
+    exit 1
+}
+hook_stopped_services=0
+if [ -n "${running_ids}" ]; then
+    hook_stopped_services=1
+fi
+
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)" || timestamp="unknown-time"
 archive="${backup_dir}/sag-data-${timestamp}-$$.tar.gz"
 archive_temp="${archive}.tmp"
-services_stopped=0
 
 cleanup() {
     status=$?
     rm -f -- "${archive_temp}"
-    if [ "${services_stopped}" -eq 1 ]; then
+    if [ "${hook_stopped_services}" -eq 1 ]; then
         docker compose -f "${compose_file}" start >> "${TRIM_TEMP_LOGFILE}" 2>&1 || true
     fi
     exit "${status}"
 }
 trap cleanup EXIT HUP INT TERM
 
-services_stopped=1
 if ! docker compose -f "${compose_file}" stop >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
     log_error "SAG upgrade could not stop services for a cold backup."
     exit 1
 fi
 
-if ! tar -C "${TRIM_PKGVAR}" -czf "${archive_temp}" data >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
+if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
+    -e SAG_LIFECYCLE_ACTION=backup -e "SAG_ARCHIVE_TEMP=/backup/${archive_temp##*/}" \
+    lifecycle /opt/sag-lifecycle.py >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
     log_error "SAG upgrade backup archive failed; active data was not changed."
     exit 1
 fi
@@ -81,10 +99,7 @@ if ! mv -- "${archive_temp}" "${archive}"; then
     exit 1
 fi
 
-if ! docker compose -f "${compose_file}" start >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
-    log_error "SAG backup completed, but services could not be restarted."
-    exit 1
-fi
-services_stopped=0
+# A successful pre-upgrade backup deliberately leaves the old application
+# stopped. The fnOS docker-project resource owns replacement and startup.
 trap - EXIT HUP INT TERM
 exit 0

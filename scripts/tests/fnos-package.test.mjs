@@ -144,6 +144,10 @@ test("structural mode renders and fnpack-builds an official package only in a te
   assert.match(compose, /\$\{TRIM_SERVICE_PORT\}:80/);
   assert.match(compose, /\$\{TRIM_PKGETC\}\/sag\.env/);
   assert.match(compose, /\$\{TRIM_PKGVAR\}\/data:\/data/);
+  assert.match(compose, /lifecycle:/);
+  assert.match(compose, /profiles:\s*\["lifecycle"\]/);
+  assert.match(compose, /network_mode: none/);
+  assert.match(compose, /user: "0:0"/);
 
   const validation = spawnSync(process.execPath, [validator, composePath], {
     cwd: repoRoot,
@@ -162,6 +166,7 @@ test("structural mode renders and fnpack-builds an official package only in a te
 
   for (const icon of ["ICON.PNG", "ICON_256.PNG"]) await access(path.join(unpacked, icon));
   await access(path.join(app, "RETAINED_DATA.md"));
+  await access(path.join(app, "docker/lifecycle.py"));
   for (const command of await readdir(path.join(unpacked, "cmd"))) {
     assert.notEqual((await stat(path.join(unpacked, "cmd", command))).mode & 0o111, 0, command);
   }

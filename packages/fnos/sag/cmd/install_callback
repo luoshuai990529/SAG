@@ -6,13 +6,18 @@ log_error() {
     printf '%s\n' "$1" >> "${TRIM_TEMP_LOGFILE}"
 }
 
+umask 077
+
 if ! mkdir -p "${TRIM_PKGETC}" "${TRIM_PKGVAR}/data" "${TRIM_PKGVAR}/backup"; then
     log_error "SAG installation could not create its private directories."
     exit 1
 fi
+if ! chmod 700 "${TRIM_PKGETC}" "${TRIM_PKGVAR}/data" "${TRIM_PKGVAR}/backup"; then
+    log_error "SAG installation could not protect its private directories."
+    exit 1
+fi
 
 secret_file="${TRIM_PKGETC}/sag.env"
-umask 077
 
 if [ ! -e "${secret_file}" ]; then
     secret="$(openssl rand -hex 32)" || {

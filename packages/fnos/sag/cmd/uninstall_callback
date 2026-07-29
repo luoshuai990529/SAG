@@ -4,10 +4,20 @@ set -u
 
 case "${SAG_DELETE_DATA:-false}" in
 true)
-    rm -rf -- "${TRIM_PKGVAR}/data" || {
-        printf '%s\n' "SAG uninstall could not delete the selected active data." >> "${TRIM_TEMP_LOGFILE}"
-        exit 1
-    }
+    data_dir="${TRIM_PKGVAR}/data"
+    compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
+    if [ -d "${data_dir}" ]; then
+        if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
+            -e SAG_LIFECYCLE_ACTION=delete lifecycle /opt/sag-lifecycle.py \
+            >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
+            printf '%s\n' "SAG uninstall could not delete the selected active data." >> "${TRIM_TEMP_LOGFILE}"
+            exit 1
+        fi
+        if ! rmdir -- "${data_dir}"; then
+            printf '%s\n' "SAG uninstall helper did not completely empty the active data directory." >> "${TRIM_TEMP_LOGFILE}"
+            exit 1
+        fi
+    fi
     ;;
 *)
     # Retain is the safe default. See RETAINED_DATA.md for the device-verification fallback.
