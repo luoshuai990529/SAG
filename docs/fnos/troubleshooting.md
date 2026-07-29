@@ -41,7 +41,7 @@ curl -fsS --max-time 5 http://127.0.0.1:3080/api/v1/system/ready
 ```bash
 API_DIGEST="${API_DIGEST:-REPLACE_WITH_SAG_API_SHA256}"
 WEB_DIGEST="${WEB_DIGEST:-REPLACE_WITH_SAG_WEB_SHA256}"
-NGINX_DIGEST="sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+NGINX_IMAGE="docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46"
 case "${API_DIGEST}:${WEB_DIGEST}" in
   *REPLACE_WITH_*)
     printf '%s\n' "Set API_DIGEST and WEB_DIGEST from the release record." >&2
@@ -54,7 +54,7 @@ docker pull \
 docker pull \
   "ghcr.io/luoshuai990529/sag-web@${WEB_DIGEST}"
 docker pull \
-  "docker.io/library/nginx@${NGINX_DIGEST}"
+  "${NGINX_IMAGE}"
 ```
 
 确认：
@@ -63,6 +63,8 @@ docker pull \
 - fnOS 不登录 Docker Hub 也能匿名拉取固定的 Nginx digest；
 - fnOS DNS、时间和 HTTPS 出站正常；
 - digest 与发布记录完全一致；
+- `node scripts/fnos-gateway-policy.mjs verify --docker docker` 通过，且 policy
+  未超过 30 天复核窗口；
 - manifest list 包含 `linux/amd64`；
 - 包内没有 `test.invalid`、占位符、`latest` 或 tag-only 引用。
 

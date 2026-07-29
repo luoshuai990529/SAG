@@ -116,7 +116,15 @@ ghcr.io/luoshuai990529/sag-web
 ```
 
 工作流先从已 checkout 的 `GITHUB_SHA` 校验 `packages/fnos/sag/manifest` 的
-`appname=sag` 与候选版本，并完成可复用 CI 质量门禁。随后它只在 runner
+`appname=sag` 与候选版本，并完成可复用 CI 质量门禁。独立的只读
+`gateway-security` job 先校验 `packages/fnos/gateway-policy.json` 尚未过期，
+再对固定 Nginx index 的原始 OCI metadata 检查 amd64/arm64 子 manifest、版本标注和
+上游 revision。它下载官方 Trivy `0.70.0` Linux amd64 归档并核对 SHA-256
+`8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9`，对固定
+`linux/amd64` gateway 执行“可修复 Critical/High 必须为零”的扫描。原始报告和
+漏洞数据库不归档，只保留脱敏摘要；该 job 失败时 staging 不会发布。
+
+随后工作流只在 runner
 本地构建并加载 amd64 API/Web，实际轮询 API ready 与 Web 根路径；这一步不写
 GHCR。
 
@@ -148,8 +156,51 @@ staging tag，而是对四个最终引用逐个对账：缺失则创建，已指
 ```bash
 docker buildx imagetools inspect ghcr.io/luoshuai990529/sag-api:1.4.0-fnos.1
 docker buildx imagetools inspect ghcr.io/luoshuai990529/sag-web:1.4.0-fnos.1
-docker buildx imagetools inspect nginx:1.27-alpine
+node scripts/fnos-gateway-policy.mjs verify --docker docker
 ```
+
+### Nginx gateway 复核与续期
+
+本轮复核日期为 `2026-07-29`，到期日为 `2026-08-28`。固定引用为：
+
+```text
+docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46
+```
+
+本地实际扫描使用 Trivy `0.70.0`，命令语义与 CI 相同：
+
+```bash
+TRIVY_BIN="${TRIVY_BIN:-REPLACE_WITH_CHECKSUM_VERIFIED_TRIVY_0_70_0}"
+case "$TRIVY_BIN" in
+  *REPLACE_WITH_*)
+    printf '%s\n' "Set TRIVY_BIN to the checksum-verified Trivy 0.70.0 executable." >&2
+    exit 2
+    ;;
+esac
+
+GATEWAY_IMAGE="$(
+  node scripts/fnos-gateway-policy.mjs verify --docker docker
+)"
+"$TRIVY_BIN" image \
+  --platform linux/amd64 \
+  --scanners vuln \
+  --severity CRITICAL,HIGH \
+  --ignore-unfixed \
+  --exit-code 1 \
+  "$GATEWAY_IMAGE"
+```
+
+`2026-07-29T16:33:41+08:00` 的实际结果为通过：Alpine `3.24.1`、image ID
+`sha256:6e01bfae6f7971512a5765fe2f52ca4267a4773c7f8b357a2d39e5300787cece`，
+可修复 Critical/High 为 `0`。这个数字来自本轮真实报告，不是预设或豁免。
+
+到期前，或 Nginx tag/digest、平台子 manifest、上游 revision、Trivy/DB 发生变化时，
+必须重新执行以下完整流程：从 Nginx 官方发布与安全公告选择已修复 stable 版本；
+核对 Docker Official Image 的 tag、index digest、amd64/arm64 子 manifest 和 OCI
+revision；用 checksum 固定的新 Trivy 版本扫描；若存在发现则停止候选发布；通过后
+在同一个受评审 commit 中更新 policy 的镜像、平台、scanner 证据、复核/到期日和本文。
+不得只延长日期或保留旧扫描结果。硬编码 30 天上限会让过期策略、过宽窗口和任意
+Docker Hub Nginx digest 在发布 Compose 校验、包构建及 workflow 中失败。
 
 ## 3. 构建正式 `.fpk`
 
@@ -159,7 +210,7 @@ docker buildx imagetools inspect nginx:1.27-alpine
 mkdir -p dist/fnos
 API_DIGEST="${API_DIGEST:-REPLACE_WITH_SAG_API_SHA256}"
 WEB_DIGEST="${WEB_DIGEST:-REPLACE_WITH_SAG_WEB_SHA256}"
-NGINX_DIGEST="sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+NGINX_IMAGE="docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46"
 
 case "${API_DIGEST}:${WEB_DIGEST}" in
   *REPLACE_WITH_*)
@@ -171,7 +222,7 @@ esac
 node scripts/build-fnos-package.mjs \
   --api-image "ghcr.io/luoshuai990529/sag-api@${API_DIGEST}" \
   --web-image "ghcr.io/luoshuai990529/sag-web@${WEB_DIGEST}" \
-  --nginx-image "docker.io/library/nginx@${NGINX_DIGEST}" \
+  --nginx-image "${NGINX_IMAGE}" \
   --output 'dist/fnos/sag-1.4.0-fnos.1.fpk'
 (
   cd dist/fnos
@@ -183,9 +234,11 @@ node scripts/build-fnos-package.mjs \
 
 构建脚本会：
 
-1. 拒绝标签、错误仓库和非 digest 引用；
+1. 拒绝可变标签、错误仓库、非 digest 引用，以及不匹配当前未过期 gateway policy
+   的任意 Nginx 引用；
 2. 解析 `docker buildx imagetools inspect --raw` JSON，要求 API/Web index 同时
-   包含 `linux/amd64` 与 `linux/arm64`，Nginx index 包含 `linux/amd64`；
+   包含 `linux/amd64` 与 `linux/arm64`；Nginx 必须精确匹配 policy 记录的
+   amd64/arm64 子 manifest digest、tag 和上游 revision；
 3. 确认 API/Web 提供的 digest 正是对应候选版本 tag 当前绑定的 digest；
 4. 将 digest 渲染进临时包目录；
 5. 运行发布 Compose 校验和 `fnpack build`；
@@ -193,7 +246,9 @@ node scripts/build-fnos-package.mjs \
 
 校验文件在输出目录内用 `.fpk` 的 basename 生成并立即验证；分发时必须把 `.fpk` 与 `.sha256` 一起移动，接收方进入两者所在目录后执行同一条 `shasum -a 256 -c`。
 
-源码包中的 `__SAG_*_IMAGE__` 是构建占位符，不能直接安装。`--structural-test` 仅用于临时测试包，使用 `test.invalid` 引用，绝不能分发或安装。
+源码包中的 `__SAG_*_IMAGE__` 是构建占位符，不能直接安装。`--structural-test`
+仅用于临时测试包；API/Web 使用 `test.invalid` 引用，gateway 仍使用正式受评审
+digest。结构包绝不能分发或安装。
 
 ## 4. 在 fnOS 安装
 

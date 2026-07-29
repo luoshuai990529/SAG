@@ -18,7 +18,7 @@ jobs:
       - name: 测试公开仓标签发布边界
         run: node --test scripts/tests/release-public.test.mjs
       - name: 测试 fnOS 发布 Compose 边界
-        run: node --test scripts/tests/validate-fnos-release.test.mjs
+        run: node --test scripts/tests/validate-fnos-release.test.mjs scripts/tests/fnos-gateway-policy.test.mjs scripts/tests/fnos-gateway-scan-summary.test.mjs
       - name: 测试 fnOS 发布工作流策略与状态机
         run: node --test scripts/tests/fnos-release-workflow.test.mjs scripts/tests/fnos-release-registry.test.mjs
       - name: 测试 fnOS 包、生命周期与文档边界

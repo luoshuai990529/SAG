@@ -20,6 +20,9 @@
 - Mac 已完成 Docker、Buildx、Compose、`fnpack` 和 `hello-world` 本地准备。`appcenter-cli` 是 fnOS 设备上的工具，不是 Mac 必装工具。
 - 源码、生命周期测试和临时结构包已经具备；公开 GHCR 镜像、正式 `.fpk`、Windows `3080` NAT、防火墙和 fnOS UI 生命周期验收仍是外部门禁。
 - 候选发布先在 CI runner 本地 smoke amd64，再写入每次运行唯一的 GHCR staging tag；
+  staging 前还会用 checksum 固定的 Trivy 扫描受评审、未过期的 Nginx
+  `linux/amd64` digest；存在可修复 Critical/High 或 OCI 平台 metadata 不一致时
+  禁止发布。
   只有原始多架构 index 与 staging 运行时 OCI 元数据都通过检查后，才按 digest
   对账式地提升候选和 commit 标签：缺失则创建、已指向同一 digest 则接受、指向
   不同 digest 则失败。该流程不能替代 GHCR 的 registry 级不可变策略；包消费者

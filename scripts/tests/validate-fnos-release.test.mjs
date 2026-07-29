@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const validator = fileURLToPath(new URL("../validate-fnos-release.mjs", import.meta.url));
 const digest = `sha256:${"a".repeat(64)}`;
+const gatewayReference = "docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
 
 function validCompose({
   api = "",
@@ -26,7 +27,7 @@ function validCompose({
   const authEnvironment = environment.length
     ? `    environment:\n${environment.join("\n")}\n`
     : "";
-  return `name: sag\nservices:\n  api:\n    image: ghcr.io/luoshuai990529/sag-api@${digest}\n${apiEnvFile}${authEnvironment}${api}  web:\n    image: ghcr.io/luoshuai990529/sag-web@${digest}\n${web}  gateway:\n    image: nginx@${digest}\n${gateway}`;
+  return `name: sag\nservices:\n  api:\n    image: ghcr.io/luoshuai990529/sag-api@${digest}\n${apiEnvFile}${authEnvironment}${api}  web:\n    image: ghcr.io/luoshuai990529/sag-web@${digest}\n${web}  gateway:\n    image: ${gatewayReference}\n${gateway}`;
 }
 
 async function fixture(t, contents) {
@@ -154,9 +155,20 @@ test("rejects a Web host port", async (t) => {
 });
 
 test("rejects a non-digest image reference", async (t) => {
-  const compose = await fixture(t, validCompose().replace(`nginx@${digest}`, "nginx:1.27-alpine"));
+  const compose = await fixture(t, validCompose().replace(gatewayReference, "nginx:1.30.4-alpine"));
   const result = validate(compose);
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /must use an immutable sha256 digest/);
+});
+
+test("rejects an immutable but unreviewed Nginx gateway digest", async (t) => {
+  const compose = await fixture(t, validCompose().replace(
+    gatewayReference,
+    `docker.io/library/nginx:1.30.4-alpine@sha256:${"f".repeat(64)}`,
+  ));
+  const result = validate(compose);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /reviewed gateway reference/i);
 });

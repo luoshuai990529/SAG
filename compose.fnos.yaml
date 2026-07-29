@@ -77,7 +77,7 @@ services:
     restart: unless-stopped
 
   gateway:
-    image: nginx:1.27-alpine
+    image: docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46
     depends_on:
       api:
         condition: service_healthy

@@ -34,7 +34,7 @@ test("source and packaged gateways apply conservative per-peer auth throttling",
 });
 
 test("locally cached release Nginx accepts the packaged gateway config", (t) => {
-  const image = "nginx:1.27-alpine";
+  const image = "docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
   const available = spawnSync("docker", ["image", "inspect", image], {
     encoding: "utf8",
   });

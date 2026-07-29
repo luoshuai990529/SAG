@@ -7,19 +7,25 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import {
+  loadGatewayPolicy,
+  validateGatewayImageReference,
+  validateGatewayIndex,
+} from "./fnos-gateway-policy.mjs";
+
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const sourcePackage = path.join(repoRoot, "packages/fnos/sag");
 const validator = path.join(repoRoot, "scripts/validate-fnos-release.mjs");
-const digestReference = /^[a-z0-9.-]+(?:\/[a-z0-9._-]+)+@sha256:[a-f0-9]{64}$/;
+const digestReference = /^[a-z0-9.-]+(?:\/[a-z0-9._-]+)+(?::[a-z0-9._-]+)?@sha256:[a-f0-9]{64}$/;
 const releaseRepositories = {
   api: "ghcr.io/luoshuai990529/sag-api@",
   web: "ghcr.io/luoshuai990529/sag-web@",
-  nginx: "docker.io/library/nginx@",
+  nginx: "docker.io/library/nginx:",
 };
 const structuralRepositories = {
   api: "test.invalid/sag-api@",
   web: "test.invalid/sag-web@",
-  nginx: "test.invalid/nginx@",
+  nginx: "docker.io/library/nginx:",
 };
 const tokens = {
   api: "__SAG_API_IMAGE__",
@@ -56,7 +62,7 @@ function parseArgs(argv) {
   return result;
 }
 
-function validateInputs(options) {
+function validateInputs(options, gatewayPolicy) {
   for (const name of ["api", "web", "nginx"]) {
     const value = options[name];
     if (!value) fail(`--${name}-image is required`);
@@ -65,6 +71,13 @@ function validateInputs(options) {
     if (!value.startsWith(repositories[name])) {
       const kind = options.structuralTest ? "test-only fixture" : "approved release repositories";
       fail(`--${name}-image must use the ${kind}`);
+    }
+    if (name === "nginx") {
+      try {
+        validateGatewayImageReference(gatewayPolicy, value);
+      } catch (error) {
+        fail(error.message);
+      }
     }
   }
   if (!options.output) fail("--output is required");
@@ -134,12 +147,20 @@ function candidateTagDigest(name, reference, version) {
   return result.stdout.trim();
 }
 
-async function verifyPublishedImages(options) {
+async function verifyPublishedImages(options, gatewayPolicy) {
   if (options.structuralTest) return;
   const version = await packageVersion();
   for (const name of ["api", "web", "nginx"]) {
     const image = inspectRawImage(name, options[name]);
-    requirePlatforms(name, image, name === "nginx" ? ["linux/amd64"] : ["linux/amd64", "linux/arm64"]);
+    if (name === "nginx") {
+      try {
+        validateGatewayIndex(gatewayPolicy, image);
+      } catch (error) {
+        fail(error.message);
+      }
+    } else {
+      requirePlatforms(name, image, ["linux/amd64", "linux/arm64"]);
+    }
     if (name === "api" || name === "web") {
       const expectedDigest = imageDigest(options[name]);
       const boundDigest = candidateTagDigest(name, options[name], version);
@@ -166,8 +187,14 @@ async function renderPackage(renderRoot, options) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  validateInputs(options);
-  await verifyPublishedImages(options);
+  let gatewayPolicy;
+  try {
+    gatewayPolicy = await loadGatewayPolicy();
+  } catch (error) {
+    fail(error.message);
+  }
+  validateInputs(options, gatewayPolicy);
+  await verifyPublishedImages(options, gatewayPolicy);
 
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-render-"));
   const renderedPackage = path.join(temporaryRoot, "sag");

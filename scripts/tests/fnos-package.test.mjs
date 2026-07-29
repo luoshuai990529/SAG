@@ -12,8 +12,12 @@ const validator = path.join(repoRoot, "scripts/validate-fnos-release.mjs");
 const sourcePackage = path.join(repoRoot, "packages/fnos/sag");
 const digestA = `sha256:${"a".repeat(64)}`;
 const digestB = `sha256:${"b".repeat(64)}`;
-const digestC = `sha256:${"c".repeat(64)}`;
 const digestD = `sha256:${"d".repeat(64)}`;
+const gatewayDigest = "sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
+const gatewayReference = `docker.io/library/nginx:1.30.4-alpine@${gatewayDigest}`;
+const gatewayRevision = "ccdab6c99ae2e2fc53a144dc68d6b8f44163adf2";
+const gatewayAmd64Digest = "sha256:8a4f4b94275ff59d809477799cbbaf1a7ab65ed1871403d05e31fd66bdb8db82";
+const gatewayArm64Digest = "sha256:d64d001f60e9a65d45980907e9070fc46d418980f311052e73c0df2eccc3cc30";
 
 function imageIndex(platforms) {
   return JSON.stringify({
@@ -32,10 +36,30 @@ const amd64 = { os: "linux", architecture: "amd64" };
 const arm64 = { os: "linux", architecture: "arm64" };
 const validIndex = imageIndex([amd64, arm64]);
 
+function gatewayIndex(platforms = [
+  [amd64, gatewayAmd64Digest],
+  [arm64, gatewayArm64Digest],
+]) {
+  return JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: platforms.map(([platform, manifestDigest]) => ({
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      digest: manifestDigest,
+      size: 123,
+      platform,
+      annotations: {
+        "org.opencontainers.image.revision": gatewayRevision,
+        "org.opencontainers.image.version": "1.30.4-alpine",
+      },
+    })),
+  });
+}
+
 async function fakeRegistry(t, {
   apiRaw = validIndex,
   webRaw = validIndex,
-  nginxRaw = imageIndex([amd64]),
+  nginxRaw = gatewayIndex(),
   apiTagDigest = digestA,
   webTagDigest = digestB,
 } = {}) {
@@ -51,7 +75,7 @@ async function fakeRegistry(t, {
         environment: { SAG_AUTH_MODE: "password" },
       },
       web: { image: `ghcr.io/luoshuai990529/sag-web@${digestB}` },
-      gateway: { image: `docker.io/library/nginx@${digestC}` },
+      gateway: { image: gatewayReference },
     },
   });
   await mkdir(bin, { recursive: true });
@@ -111,7 +135,7 @@ function structuralArgs(output) {
     "--structural-test",
     "--api-image", `test.invalid/sag-api@${digestA}`,
     "--web-image", `test.invalid/sag-web@${digestB}`,
-    "--nginx-image", `test.invalid/nginx@${digestC}`,
+    "--nginx-image", gatewayReference,
     "--output", output,
   ];
 }
@@ -142,6 +166,19 @@ test("test-only fixture references are refused outside structural-test mode", as
   assert.match(result.stderr, /test-only|approved release repositories/i);
 });
 
+test("release build refuses an immutable Nginx digest absent from the reviewed policy", async (t) => {
+  const root = await tempRoot(t);
+  const result = build([
+    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--nginx-image", `docker.io/library/nginx:1.30.4-alpine@sha256:${"f".repeat(64)}`,
+    "--output", path.join(root, "candidate.fpk"),
+  ]);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /reviewed gateway reference/i);
+});
+
 test("release build refuses an approved digest when registry inspection fails", async (t) => {
   const root = await tempRoot(t);
   const bin = path.join(root, "bin");
@@ -155,7 +192,7 @@ test("release build refuses an approved digest when registry inspection fails", 
   const result = build([
     "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
     "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
-    "--nginx-image", `docker.io/library/nginx@${digestC}`,
+    "--nginx-image", gatewayReference,
     "--output", output,
   ], {
     PATH: `${bin}:${process.env.PATH}`,
@@ -173,7 +210,7 @@ test("release build rejects an arm64-only API index", async (t) => {
   const result = build([
     "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
     "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
-    "--nginx-image", `docker.io/library/nginx@${digestC}`,
+    "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
   ], await fakeRegistry(t, { apiRaw: imageIndex([arm64]) }));
 
@@ -186,7 +223,7 @@ test("release build rejects a single-manifest Web image", async (t) => {
   const result = build([
     "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
     "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
-    "--nginx-image", `docker.io/library/nginx@${digestC}`,
+    "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
   ], await fakeRegistry(t, {
     webRaw: JSON.stringify({ mediaType: "application/vnd.oci.image.manifest.v1+json", config: {} }),
@@ -201,7 +238,7 @@ test("release build rejects an API index missing linux/arm64", async (t) => {
   const result = build([
     "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
     "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
-    "--nginx-image", `docker.io/library/nginx@${digestC}`,
+    "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
   ], await fakeRegistry(t, { apiRaw: imageIndex([amd64]) }));
 
@@ -214,12 +251,12 @@ test("release build rejects an Nginx index missing linux/amd64", async (t) => {
   const result = build([
     "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
     "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
-    "--nginx-image", `docker.io/library/nginx@${digestC}`,
+    "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
-  ], await fakeRegistry(t, { nginxRaw: imageIndex([arm64]) }));
+  ], await fakeRegistry(t, { nginxRaw: gatewayIndex([[arm64, gatewayArm64Digest]]) }));
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /nginx.*linux\/amd64/i);
+  assert.match(result.stderr, /gateway.*linux\/amd64/i);
 });
 
 test("release build rejects an API digest not bound to the candidate tag", async (t) => {
@@ -227,7 +264,7 @@ test("release build rejects an API digest not bound to the candidate tag", async
   const result = build([
     "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
     "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
-    "--nginx-image", `docker.io/library/nginx@${digestC}`,
+    "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
   ], await fakeRegistry(t, { apiTagDigest: digestD }));
 
@@ -240,7 +277,7 @@ test("release build rejects a Web digest not bound to the exact candidate tag", 
   const result = build([
     "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
     "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
-    "--nginx-image", `docker.io/library/nginx@${digestC}`,
+    "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
   ], await fakeRegistry(t, { webTagDigest: digestD }));
 
@@ -254,7 +291,7 @@ test("release build accepts candidate-bound multi-platform API and Web indexes",
   const result = build([
     "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
     "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
-    "--nginx-image", `docker.io/library/nginx@${digestC}`,
+    "--nginx-image", gatewayReference,
     "--output", output,
   ], await fakeRegistry(t));
 
@@ -314,7 +351,7 @@ test("structural mode renders and fnpack-builds an official package only in a te
   const compose = await readFile(composePath, "utf8");
   assert.match(compose, new RegExp(`test\\.invalid/sag-api@${digestA}`));
   assert.match(compose, new RegExp(`test\\.invalid/sag-web@${digestB}`));
-  assert.match(compose, new RegExp(`test\\.invalid/nginx@${digestC}`));
+  assert.match(compose, new RegExp(gatewayReference.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.doesNotMatch(compose, /__SAG_(?:API|WEB|NGINX)_IMAGE__/);
   assert.match(compose, /\$\{TRIM_SERVICE_PORT\}:80/);
   assert.match(compose, /\$\{TRIM_PKGETC\}\/sag\.env/);

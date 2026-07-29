@@ -4,6 +4,11 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 
+import {
+  loadGatewayPolicy,
+  validateGatewayImageReference,
+} from "./fnos-gateway-policy.mjs";
+
 const defaultCompose = "packages/fnos/sag/docker-compose.yml";
 const composePath = path.resolve(process.cwd(), process.argv[2] || defaultCompose);
 const immutableDigest = /@sha256:[a-f0-9]{64}$/i;
@@ -89,7 +94,7 @@ function validateNoHostPorts(name, service, errors) {
   }
 }
 
-function validate(compose) {
+function validate(compose, gatewayPolicy) {
   const errors = [];
   const services = compose.services;
   if (!services || typeof services !== "object") return ["Compose must define services"];
@@ -113,9 +118,24 @@ function validate(compose) {
     validateApiSecret(services.api, errors);
     validateApiAuth(services.api, errors);
   }
+  if (!services.gateway || typeof services.gateway !== "object") {
+    errors.push("Compose must define the gateway service");
+  } else if (typeof services.gateway.image === "string") {
+    try {
+      validateGatewayImageReference(gatewayPolicy, services.gateway.image);
+    } catch (error) {
+      errors.push(error.message.replace(/^fnOS gateway policy:\s*/, ""));
+    }
+  }
   return errors;
 }
 
-const errors = validate(loadCompose(composePath));
+let gatewayPolicy;
+try {
+  gatewayPolicy = await loadGatewayPolicy();
+} catch (error) {
+  fail([error.message]);
+}
+const errors = validate(loadCompose(composePath), gatewayPolicy);
 if (errors.length) fail(errors);
 console.log(`release Compose validation passed: ${composePath}`);

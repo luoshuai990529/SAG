@@ -65,3 +65,26 @@ test("amd64 smoke starts the API in password mode and exercises bootstrap plus d
   assert.match(smoke, /test "\$initialized_status" = 200/);
   assert.match(smoke, /test "\$password_status" = 200/);
 });
+
+test("gateway scan gates publication with a checksum-pinned Trivy binary and exact reviewed digest", async () => {
+  const workflow = await readFile(workflowPath, "utf8");
+  const gateway = job(workflow, "gateway-security");
+  const staging = job(workflow, "staging");
+
+  assert.match(gateway, /permissions:\n      contents: read/);
+  assert.doesNotMatch(gateway, /packages: write/);
+  assert.match(gateway, /fnos-gateway-policy\.mjs verify/);
+  assert.match(gateway, /TRIVY_VERSION: "0\.70\.0"/);
+  assert.match(gateway, /TRIVY_SHA256: "8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9"/);
+  assert.match(gateway, /sha256sum --check --strict/);
+  assert.match(gateway, /--platform linux\/amd64/);
+  assert.match(gateway, /--severity CRITICAL,HIGH/);
+  assert.match(gateway, /--ignore-unfixed/);
+  assert.match(gateway, /--exit-code 1/);
+  assert.match(gateway, /"\$GATEWAY_IMAGE"/);
+  assert.match(gateway, /trivy_status="\$\?"/);
+  assert.match(gateway, /summarize-fnos-gateway-scan\.mjs/);
+  assert.match(gateway, /test "\$trivy_status" -eq 0/);
+  assert.match(gateway, /if: \$\{\{ always\(\) \}\}/);
+  assert.match(staging, /needs: \[candidate, local-amd64-smoke, gateway-security\]/);
+});
