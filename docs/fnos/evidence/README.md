@@ -1,0 +1,18 @@
+# fnOS 验收证据目录
+
+仓库只保存脱敏、可公开的验收证据。模型密钥、Authorization、Cookie、用户文档正文和 `sag.env` 不得进入本目录。
+
+建议结构：
+
+```text
+docs/fnos/evidence/
+└── YYYY-MM-DD/
+    └── <case-id>/
+        ├── summary.md
+        ├── command.log
+        └── screenshot-01.png
+```
+
+`summary.md` 至少记录 SAG/`.fpk`/fnOS 版本、commit、执行时间、设备架构、测试地址（可脱敏）、前置数据状态、结论和日志摘要。`command.log` 保存脱敏后的相关命令及关键输出，不保存整份无关日志。
+
+设备侧截图尚未产生的用例，在验收矩阵中仍填写计划路径并标记“待执行”，不能用空白截图或 Mac 本地结构包冒充 fnOS 实机证据。

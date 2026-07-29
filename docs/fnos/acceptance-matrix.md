@@ -1,0 +1,68 @@
+# SAG `1.4.0-fnos.1` 验收矩阵
+
+执行日期：2026-07-29（Asia/Shanghai）
+
+基线：`origin/main@06f29b2ae571dfcedecc85577ee6910ed87a810a`
+
+候选分支：`feat/fnos-docker-app`
+
+设备基线：fnOS 1.2.0302，x86-64 VMware，2 vCPU / 4 GB
+
+当前管理入口：`http://192.168.50.178:15666`
+
+计划 SAG 入口：`http://192.168.50.178:3080`
+
+状态含义：
+
+- **通过**：本轮有可重复命令和结果；
+- **待执行**：需要 GHCR、Windows 或 fnOS 设备外部状态；
+- **阻塞**：当前外部门禁不满足，不能产出正式发布物；
+- **不适用**：明确不在本候选版支持边界内。
+
+## 开发机与静态验收
+
+| ID | 验收项 | 状态 | 版本/日志摘要 | 日志或截图位置 |
+| --- | --- | --- | --- | --- |
+| MAC-01 | Docker daemon、Buildx、Compose、hello-world | 通过 | Engine 29.6.2；Buildx 0.35.0；Compose 5.3.1；hello-world 使用 arm64v8 | 本文档摘要；无 UI 截图 |
+| MAC-02 | `fnpack` 安装与校验 | 通过 | 1.2.3；SHA-256 `d40cb00896cb2a5d211357d255750ed0cbe7f2d141df671c2b717afb4e74bf77` | [Mac 准备](./mac-preparation.md) |
+| MAC-03 | 官方 hello-docker 本地 `fnpack build` | 通过 | 临时 `.fpk` SHA-256 `39c0090f2ca037c70af42c1197c1940329959722ceca2a914cdb291e90f61b87` | [Mac 准备](./mac-preparation.md) |
+| CODE-01 | API Ruff | 通过 | `uv run ruff check sag_api/ sag_agent/ tests/`：All checks passed | 命令摘要；截图不适用 |
+| CODE-02 | API pytest | 通过 | `uv run python -m pytest -q`：192 passed，1 条 SQLAlchemy warning | 命令摘要；截图不适用 |
+| CODE-03 | Web 单测 | 通过 | `npm run test:unit`：47 files、354 tests passed | 命令摘要；截图不适用 |
+| CODE-04 | Web 类型/Lint/生产构建 | 通过 | `tsc --noEmit`、ESLint 0 warning、Next.js 15.5.20 production build 均通过 | 命令摘要；截图不适用 |
+| PKG-01 | 发布 Compose 拒绝可变镜像、弱密钥和额外端口 | 通过 | 发布、生命周期、包结构合计 28 tests passed | 命令摘要；截图不适用 |
+| PKG-02 | 生命周期脚本与完整数据冷备行为 | 通过 | 包含空间/命令失败、冷备原子发布、失败后服务恢复和卸载选择回归 | 命令摘要；截图不适用 |
+| PKG-03 | Shell/JSON/Compose 静态检查 | 通过 | 9 个 Bash 脚本、4 个 JSON、源码与包模板 Compose config 均通过 | 命令摘要；截图不适用 |
+| PKG-04 | 临时结构包 `fnpack build` 和 SHA-256 | 通过 | 使用 `test.invalid` digest 仅在临时目录构建；SHA-256 `3cd3fc69ff43a55ccdf256f4bb3473c6f27bd47c4bd258f80d96dc72a40213fc`；不可分发 | 命令摘要；截图不适用 |
+| PKG-05 | 正式 `sag-1.4.0-fnos.1.fpk` 和 SHA-256 | 阻塞 | API/Web 公共 manifest-list digest 尚未发布，构建脚本会拒绝不存在的引用 | `docs/fnos/evidence/2026-07-29/pkg-05/summary.md`（待生成） |
+
+## 网络和 fnOS 生命周期验收
+
+| ID | 验收项 | 状态 | 预期/日志摘要 | 截图位置 |
+| --- | --- | --- | --- | --- |
+| NET-01 | Mac 打开 fnOS 管理入口 | 通过 | `192.168.50.178:15666 -> 192.168.252.10:5666`，到达登录页 | `docs/fnos/evidence/2026-07-29/net-01/screenshot-01.png`（待脱敏归档） |
+| NET-02 | Windows `3080` NAT 与 `/24` 防火墙限制 | 待执行 | 需在 Windows VMware/防火墙配置后从 Mac 验证 | `docs/fnos/evidence/<date>/net-02/` |
+| FPK-01 | hello-docker 安装、打开、启停、卸载 | 待执行 | fnOS 管理会话需要用户登录 | `docs/fnos/evidence/<date>/fpk-01/` |
+| FPK-02 | SAG 全新安装、桌面打开、无模型密钥启动 | 阻塞 | 依赖 PKG-05、NET-02 和 fnOS 登录 | `docs/fnos/evidence/<date>/fpk-02/` |
+| FPK-03 | 首次用户初始化，之后禁止继续注册 | 待执行 | 首个用户成功；第二次公开注册被拒绝 | `docs/fnos/evidence/<date>/fpk-03/` |
+| BIZ-01 | Markdown/PDF 上传、抽取、索引、检索 | 待执行 | 凭据私下录入且不进入证据 | `docs/fnos/evidence/<date>/biz-01/` |
+| BIZ-02 | SSE 流式问答和引用打开 | 待执行 | 浏览器请求保持 `:3080` 同源，无 CORS/SSE 中断 | `docs/fnos/evidence/<date>/biz-02/` |
+| BIZ-03 | MCP URL 和转发头 | 待执行 | `/mcp/` 同源，Host/X-Forwarded-* 正确 | `docs/fnos/evidence/<date>/biz-03/` |
+| DATA-01 | 停止/启动、容器重建、fnOS 重启数据保留 | 待执行 | 用户、SQLite、LanceDB、上传原文和索引均保留 | `docs/fnos/evidence/<date>/data-01/` |
+| DATA-02 | 完整冷备恢复到新实例 | 待执行 | 恢复完整 `/data`，旧文档可检索和打开 | `docs/fnos/evidence/<date>/data-02/` |
+| UPG-01 | `1.4.0-fnos.0 -> 1.4.0-fnos.1` | 待执行 | 备份空间门禁、冷备、升级、旧知识库检索 | `docs/fnos/evidence/<date>/upg-01/` |
+| UPG-02 | 模拟失败与回滚 | 待执行 | 活动数据不损坏，完整数据与匹配镜像一起回滚 | `docs/fnos/evidence/<date>/upg-02/` |
+| UN-01 | 默认保留卸载并重装恢复 | 待执行 | 先确认 fnOS 是否清理私有运行目录；必要时使用外部保留副本 | `docs/fnos/evidence/<date>/un-01/` |
+| UN-02 | 明确删除数据卸载 | 待执行 | 仅显式选择后删除；执行前二次确认外部备份 | `docs/fnos/evidence/<date>/un-02/` |
+| PERF-01 | 4 GB 轻量档无 OOM | 待执行 | 并发 1/2、缓存 4、预热 1；完整业务流程无 OOMKilled | `docs/fnos/evidence/<date>/perf-01/` |
+
+## 正式发布门禁
+
+| ID | 门禁 | 当前结论 |
+| --- | --- | --- |
+| REL-01 | GHCR API/Web 公开多架构镜像 | 阻塞：候选工作流尚未在可手动运行的默认分支发布，当前包不可匿名检查 |
+| REL-02 | x86-64 fnOS 实机 | 待执行：VM 结果不能替代实机认证 |
+| REL-03 | ARM64 fnOS 实机 | 不适用：本候选包声明 x86；正式声明 ARM64 支持前必须新增实机认证 |
+| REL-04 | 飞牛应用中心上架 | 待执行：发布材料、审核和平台反馈属于候选版之后的门禁 |
+
+只有 PKG-05、NET-02、FPK/BIZ/DATA/UPG/UN/PERF 设备用例以及 REL-02 完成后，才能把 `1.4.0-fnos.1` 标记为 x86 正式候选交付物。构建出临时结构包不等于设备验收。
