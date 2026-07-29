@@ -120,6 +120,16 @@ function headerValues(headers, name) {
     .map((line) => line.slice(line.indexOf(":") + 1).trim());
 }
 
+function requireHttpEnvelope(response, operation) {
+  if (!/^\d{3}$/.test(response.status)) fail(`${operation} must emit an exact three-digit HTTP status`);
+  const statusLines = response.headers
+    .split(/\r?\n/)
+    .map((line) => /^HTTP\/\d(?:\.\d)?\s+(\d{3})(?:\s|$)/i.exec(line))
+    .filter(Boolean);
+  if (statusLines.length !== 1) fail(`${operation} must contain exactly one HTTP status line`);
+  if (statusLines[0][1] !== response.status) fail(`${operation} header status must match curl HTTP status`);
+}
+
 async function requireApiReady(options, attempts = 30) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const response = captureHttp(options, "http://127.0.0.1:18001/api/v1/system/ready");
@@ -130,6 +140,7 @@ async function requireApiReady(options, attempts = 30) {
       }
       fail(`API readiness request failed after ${attempts} attempts: ${response.curlError || response.status}`);
     }
+    requireHttpEnvelope(response, "API readiness");
     if (response.status !== "200") fail(`API readiness must return exact HTTP 200, received ${response.status}`);
     let payload;
     try {
@@ -147,11 +158,13 @@ function requireWebRoot(options) {
   const url = "http://127.0.0.1:13001/";
   const response = captureHttp(options, url);
   if (response.curlStatus !== 0) fail(`Web root request failed: ${response.curlError}`);
+  requireHttpEnvelope(response, "Web root");
   if (!["307", "308"].includes(response.status)) {
     fail(`Web root must return exact HTTP 307 or 308, received ${response.status}`);
   }
   const locations = headerValues(response.headers, "Location");
   if (locations.length !== 1) fail("Web root must return exactly one Location header normalized to /login");
+  if (locations[0] !== "/login") fail(`Web root raw Location must be exactly /login, received ${locations[0]}`);
   let location;
   try {
     location = new URL(locations[0], url);
@@ -166,13 +179,16 @@ function requireWebRoot(options) {
 function requireWebLogin(options) {
   const response = captureHttp(options, "http://127.0.0.1:13001/login");
   if (response.curlStatus !== 0) fail(`Web login request failed: ${response.curlError}`);
+  requireHttpEnvelope(response, "Web login");
   if (response.status !== "200") fail(`Web login must return exact HTTP 200, received ${response.status}`);
   const contentTypes = headerValues(response.headers, "Content-Type");
   if (contentTypes.length !== 1 || !/^text\/html(?:;|$)/i.test(contentTypes[0])) {
     fail(`Web login Content-Type must be text/html, received ${contentTypes.join(", ") || "missing"}`);
   }
   const body = response.body.trim();
-  if (!/^<!doctype html>/i.test(body) || !body.includes("/_next/static/")) {
+  const uncommented = body.replace(/<!--[\s\S]*?-->/g, "");
+  const nextAssetTag = /<(?:script|link)\b[^>]*\b(?:src|href)\s*=\s*(["'])\/_next\/static\/[^"'<>]*\1[^>]*>/i;
+  if (!/^<!doctype html>/i.test(body) || !nextAssetTag.test(uncommented)) {
     fail("Web login must contain stable Next HTML markers");
   }
 }
@@ -220,7 +236,9 @@ async function smoke(options) {
       "--publish", "127.0.0.1:13001:3000",
       webImage,
     ], "exact Web digest start");
-    await requireApiReady(options);
+    const attemptsValue = options.readiness_attempts ?? "30";
+    if (!/^[1-9]\d*$/.test(attemptsValue)) fail("--readiness-attempts must be a positive integer");
+    await requireApiReady(options, Number(attemptsValue));
     if (loginStatus(options, { name: "Digest Smoke Owner" }) !== "401") fail("name-only login must return 401 in password mode");
     if (loginStatus(options, { name: "Digest Smoke Owner", password, bootstrap_token: bootstrapToken }) !== "200") {
       fail("bootstrap initialization login must return 200");

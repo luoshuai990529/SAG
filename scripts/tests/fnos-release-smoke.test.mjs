@@ -56,6 +56,8 @@ if (dataIndex >= 0) {
   if (outputIndex >= 0) fs.writeFileSync(args[outputIndex + 1], response.body);
   if (headerIndex >= 0) fs.writeFileSync(args[headerIndex + 1], response.headers);
   process.stdout.write(String(response.status));
+  if (response.stderr) process.stderr.write(response.stderr);
+  if (response.exitCode) process.exit(response.exitCode);
 }
 process.exit(0);
 `);
@@ -76,18 +78,24 @@ process.exit(0);
           status: 200,
           headers: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n",
           body: JSON.stringify({ status: "ready", db: true }),
+          exitCode: 0,
+          stderr: "",
           ...readiness,
         },
         root: {
           status: 307,
           headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login\r\n\r\n",
           body: "",
+          exitCode: 0,
+          stderr: "",
           ...rootResponse,
         },
         login: {
           status: 200,
           headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n",
           body: '<!DOCTYPE html><html><head><link href="/_next/static/css/app.css"></head><body>SAG</body></html>',
+          exitCode: 0,
+          stderr: "",
           ...loginResponse,
         },
       }),
@@ -102,6 +110,7 @@ function invoke(tools, command = "smoke") {
     smoke, command,
     "--docker", tools.docker,
     ...(command === "smoke" ? ["--curl", tools.curl, "--api-image", apiImage, "--web-image", webImage] : []),
+    ...(command === "smoke" ? ["--readiness-attempts", "1"] : []),
     "--scope", "test-123",
   ], { cwd: repoRoot, encoding: "utf8", env: { ...process.env, ...tools.env } });
 }
@@ -160,6 +169,10 @@ for (const [name, readiness, message] of [
   ["wrong status field", { body: JSON.stringify({ status: "starting", db: true }) }, /status.*ready/i],
   ["malformed JSON", { body: "{not-json" }, /readiness.*JSON/i],
   ["database false", { body: JSON.stringify({ status: "ready", db: false }) }, /db.*true/i],
+  ["curl exit", { exitCode: 7, stderr: "connection refused", body: "" }, /readiness request failed/i],
+  ["missing status", { status: "" }, /exact three-digit HTTP status/i],
+  ["duplicate status", { status: "200200" }, /exact three-digit HTTP status/i],
+  ["duplicate header status", { headers: "HTTP/1.1 200 OK\r\nHTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" }, /exactly one HTTP status line/i],
 ]) {
   test(`rejects API readiness with ${name}`, async (t) => {
     const tools = await fakeTools(t, { readiness });
@@ -174,6 +187,15 @@ for (const [name, rootResponse, message] of [
   ["arbitrary 302", { status: 302, headers: "HTTP/1.1 302 Found\r\nLocation: /login\r\n\r\n" }, /Web root.*307 or 308/i],
   ["redirect loop", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /\r\n\r\n" }, /Location.*\/login/i],
   ["wrong location", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /chat\r\n\r\n" }, /Location.*\/login/i],
+  ["empty query delimiter", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login?\r\n\r\n" }, /raw Location.*exactly \/login/i],
+  ["empty hash delimiter", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login#\r\n\r\n" }, /raw Location.*exactly \/login/i],
+  ["query hash delimiters", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login?#\r\n\r\n" }, /raw Location.*exactly \/login/i],
+  ["encoded path", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /%6cogin\r\n\r\n" }, /raw Location.*exactly \/login/i],
+  ["open redirect", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: //evil.example/login\r\n\r\n" }, /raw Location.*exactly \/login/i],
+  ["wrong host", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://evil.example/login\r\n\r\n" }, /raw Location.*exactly \/login/i],
+  ["missing Location", { headers: "HTTP/1.1 307 Temporary Redirect\r\n\r\n" }, /exactly one Location/i],
+  ["duplicate Location", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login\r\nLocation: /login\r\n\r\n" }, /exactly one Location/i],
+  ["curl exit", { exitCode: 7, stderr: "connection refused" }, /Web root request failed/i],
   ["unexpected 200", { status: 200, headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n", body: "<!doctype html>" }, /Web root.*307 or 308/i],
 ]) {
   test(`rejects Web root ${name}`, async (t) => {
@@ -189,6 +211,11 @@ for (const [name, loginResponse, message] of [
   ["wrong content type", { headers: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" }, /Content-Type.*text\/html/i],
   ["arbitrary body", { body: "<html><body>OK</body></html>" }, /Next.*HTML markers/i],
   ["empty body", { body: "" }, /Next.*HTML markers/i],
+  ["marker in comment", { body: '<!doctype html><!-- <script src="/_next/static/x.js"></script> --><html><body>SAG</body></html>' }, /Next.*HTML markers/i],
+  ["marker as text", { body: "<!doctype html><html><body>/_next/static/x.js</body></html>" }, /Next.*HTML markers/i],
+  ["missing Content-Type", { headers: "HTTP/1.1 200 OK\r\n\r\n" }, /Content-Type.*text\/html/i],
+  ["duplicate Content-Type", { headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Type: text/html\r\n\r\n" }, /Content-Type.*text\/html/i],
+  ["curl exit", { exitCode: 7, stderr: "connection refused" }, /Web login request failed/i],
 ]) {
   test(`rejects Web login ${name}`, async (t) => {
     const tools = await fakeTools(t, { loginResponse });
@@ -197,6 +224,16 @@ for (const [name, loginResponse, message] of [
     assert.match(result.stderr, message);
   });
 }
+
+test("accepts a real quoted Next script marker with CRLF headers", async (t) => {
+  const tools = await fakeTools(t, {
+    loginResponse: {
+      headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n",
+      body: '<!doctype html><html><body><script defer src="/_next/static/chunks/app.js"></script></body></html>',
+    },
+  });
+  assert.equal(invoke(tools).status, 0);
+});
 
 test("fails closed when an exact digest pull fails and still attempts cleanup", async (t) => {
   const tools = await fakeTools(t, { dockerFail: `pull --platform linux/amd64 ${apiImage}` });
