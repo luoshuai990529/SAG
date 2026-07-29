@@ -164,13 +164,20 @@ if ! mv -- "${secret_temp}" "${secret_file}"; then
     exit 1
 fi
 
-# The active env now contains only the new bootstrap. Until the transaction
-# below commits the initialized user rejects it, so a crash is safely retryable
-# and can never reactivate the old bootstrap.
+# The active path now contains only the new bootstrap. Durably sync both the
+# file and its rename before starting the database helper; the app stays stopped
+# throughout, and a retry publishes yet another token regardless of DB state.
+if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
+    -e SAG_LIFECYCLE_ACTION=auth-fsync lifecycle-auth-fsync /opt/sag-lifecycle.py \
+    >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
+    log_error "SAG auth recovery could not durably sync the rotated credential; the database reset was not started. Keep the app stopped and retry."
+    exit 1
+fi
+
 if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
     -e SAG_LIFECYCLE_ACTION=auth-reset lifecycle-auth-reset /opt/sag-lifecycle.py \
     >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
-    log_error "SAG auth recovery database reset failed; the new bootstrap remains inactive. Retry while the app remains stopped."
+    log_error "SAG auth recovery database helper failed; its commit state is unknown. Keep the app stopped and rerun local reset before any startup."
     exit 1
 fi
 

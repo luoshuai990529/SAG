@@ -105,8 +105,7 @@ async def register_user(
             await consume_dummy_password_check(password)
             raise AuthError(_AUTH_FAILURE)
         if not valid_bootstrap or not valid_password:
-            if valid_password:
-                await consume_dummy_password_check(password)
+            await consume_dummy_password_check(password)
             raise AuthError(_AUTH_FAILURE)
         user = User(
             email=email,

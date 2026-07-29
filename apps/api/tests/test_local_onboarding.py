@@ -213,22 +213,6 @@ async def test_password_mode_register_requires_bootstrap_and_hides_existing_user
 
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions() as session:
-        with pytest.raises(AuthError, match="身份验证失败"):
-            await register_user(
-                session,
-                email="owner@example.com",
-                password="correct horse",
-                name="Owner",
-            )
-        created = await register_user(
-            session,
-            email="owner@example.com",
-            password="correct horse",
-            name="Owner",
-            bootstrap_token="d" * 64,
-        )
-        assert created.password_initialized is True
-
         dummy_checks: list[str] = []
 
         async def record_dummy_check(password: str) -> None:
@@ -239,6 +223,42 @@ async def test_password_mode_register_requires_bootstrap_and_hides_existing_user
             "consume_dummy_password_check",
             record_dummy_check,
         )
+        route_valid_short_password = RegisterRequest(
+            email="owner@example.com",
+            password="12345678",
+            name="Owner",
+            bootstrap_token="d" * 64,
+        ).password
+        with pytest.raises(AuthError, match="身份验证失败"):
+            await register_user(
+                session,
+                email="owner@example.com",
+                password=route_valid_short_password,
+                name="Owner",
+                bootstrap_token="d" * 64,
+            )
+        assert dummy_checks == [route_valid_short_password]
+        dummy_checks.clear()
+
+        with pytest.raises(AuthError, match="身份验证失败"):
+            await register_user(
+                session,
+                email="owner@example.com",
+                password="correct horse",
+                name="Owner",
+            )
+        assert dummy_checks == ["correct horse"]
+        dummy_checks.clear()
+        created = await register_user(
+            session,
+            email="owner@example.com",
+            password="correct horse",
+            name="Owner",
+            bootstrap_token="d" * 64,
+        )
+        assert created.password_initialized is True
+        assert dummy_checks == []
+
         for email in ("owner@example.com", "attacker@example.com"):
             with pytest.raises(AuthError, match="身份验证失败"):
                 await register_user(

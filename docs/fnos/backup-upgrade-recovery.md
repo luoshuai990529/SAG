@@ -166,11 +166,12 @@ curl -fsS http://127.0.0.1:3080/api/v1/system/ready
   再远程重放。
 - 管理员密码恢复必须先停服，并在 fnOS 本地维护上下文运行
   `"${TRIM_APPDEST}/cmd/auth_reset" --confirm-local-reset`。命令两次确认每个项目
-  容器仅处于 `created`/`exited`，先原子轮换 `0600` bootstrap，再用 SQLite 事务
-  递增认证版本并把唯一用户设为待初始化。密钥发布后、数据库提交前失败时，新
-  bootstrap 尚未激活且旧值已失效；保持停服并重跑即可。成功后使用原名字、新密码
-  和新 bootstrap 完成一次初始化；错误名字和停用用户必须统一拒绝。不得把
-  bootstrap 当作长期远程重置凭据。
+  容器仅处于 `created`/`exited`，先原子轮换 `0600` bootstrap 并 fsync 文件及目录，
+  再用 SQLite 事务递增认证版本并把唯一用户设为待初始化。fsync 失败会在数据库前
+  闭锁；数据库 helper 一旦启动而客户端失败，提交状态未知，新 bootstrap 可能已
+  激活。两种情况都必须保持停服并重跑，重试会发布另一个新值并安全收敛。成功后
+  使用原名字、新密码和新 bootstrap 完成一次初始化；错误名字和停用用户必须统一
+  拒绝。不得把 bootstrap 当作长期远程重置凭据。
 - 失败回滚：停止新版 → 恢复升级前完整 `/data` → 安装与该数据格式匹配的旧 `.fpk` → 完整验收。不能只回退镜像。
 - 默认卸载：在向导选择 **Retain data (recommended)**，并提前把冷备复制到应用目录之外。
 - 明确删除：只有用户主动选择 **Permanently delete active data** 时，卸载脚本才删除活动数据。删除属于不可恢复操作，外部备份不在脚本清理范围内。

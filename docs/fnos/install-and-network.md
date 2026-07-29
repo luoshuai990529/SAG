@@ -243,14 +243,25 @@ node scripts/build-fnos-package.mjs \
 
 1. 两次确认项目全部容器处于 `created`/`exited`，第二次紧邻首次凭据写入；
 2. 以 `0600` 临时文件保存新 bootstrap，并原子替换 `sag.env`，会话密钥不变；
-3. 通过离线 SQLite `BEGIN IMMEDIATE` 事务把唯一用户设为待初始化并递增认证版本；
-4. 事务提交后，新 bootstrap 才能与原名字和新密码一起使用，所有旧 JWT 均失效。
+3. 通过同一固定 API 镜像中的离线 helper，依次 `fsync` 新 `sag.env` 文件和
+   `TRIM_PKGETC` 目录；任一步失败都不会启动数据库 reset；
+4. 通过离线 SQLite `BEGIN IMMEDIATE` 事务把唯一用户设为待初始化并递增认证版本；
+5. 事务提交后，新 bootstrap 可与原名字和新密码一起使用，所有旧 JWT 均失效。
 
-在第 2 步前失败时数据库未变，旧 bootstrap 对已初始化用户仍然无效；第 2 步后
-崩溃或数据库事务失败时，用户仍为已初始化，新 bootstrap 尚未激活，旧 bootstrap
-已经不在活动配置中，因此二者都不能远程重置。保持应用停止并原样重跑命令即可；
-重试会再次轮换 bootstrap。只有命令成功后才启动应用。不得为了“恢复”而把旧
-bootstrap 写回 `sag.env`。
+在第 4 步调用前失败时，命令保证数据库 reset 尚未启动；若原子替换已经发生，活动
+路径已指向新 bootstrap，但 fsync 失败意味着不能宣称它已持久落盘。保持应用停止并
+重跑即可。
+
+一旦第 4 步的 Docker/helper 已启动，而客户端返回失败或中途断开，数据库是否提交
+是**未知状态**：新 bootstrap 可能已激活，也可能尚未激活。此时旧 bootstrap 已在
+第 2–3 步从持久活动配置移除，但不得启动应用或尝试远程登录来探测状态。保持停服，
+原样重跑本地 reset；重跑会安全地再次发布一个全新 bootstrap，并把数据库收敛到
+待初始化状态。只有一次完整命令明确成功后才启动应用。不得把旧 bootstrap 写回
+`sag.env`。
+
+验收证据应记录 UTC 时间、命令退出码/信号、脱敏后的 `auth-fsync` 先于 `auth-reset`
+命令顺序、`sag.env` 为普通文件且权限 `0600`，以及成功重跑后旧 JWT 被拒绝。不得
+记录 `sag.env` 内容、bootstrap、密码、Cookie 或 Authorization。
 
 也可以在 fnOS 设备 shell 使用官方 `appcenter-cli`：
 

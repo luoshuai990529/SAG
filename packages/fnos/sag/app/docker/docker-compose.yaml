@@ -89,6 +89,12 @@ services:
       - "${TRIM_PKGVAR}/data:/data"
       - "${TRIM_APPDEST}/docker/lifecycle.py:/opt/sag-lifecycle.py:ro"
 
+  lifecycle-auth-fsync:
+    <<: *sag-lifecycle
+    volumes:
+      - "${TRIM_PKGETC}:/config"
+      - "${TRIM_APPDEST}/docker/lifecycle.py:/opt/sag-lifecycle.py:ro"
+
   web:
     image: "__SAG_WEB_IMAGE__"
     container_name: sag-web

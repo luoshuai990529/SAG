@@ -113,6 +113,9 @@ case "$*" in
     fi
     exit "\${FAKE_HELPER_AUTH_RESET_EXIT:-0}"
     ;;
+  *SAG_LIFECYCLE_ACTION=auth-fsync*)
+    exit "\${FAKE_HELPER_AUTH_FSYNC_EXIT:-0}"
+    ;;
 esac
 exit "\${FAKE_DOCKER_EXIT:-0}"
   `);
@@ -358,6 +361,64 @@ test("container lifecycle helper refuses ambiguous users without changing any ro
   assert.equal(queried.stdout.trim(), "[(1, 1, 3), (2, 1, 4)]");
 });
 
+test("container lifecycle helper durably syncs the auth env file then its directory", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-helper-auth-fsync-"));
+  const config = path.join(root, "config");
+  await mkdir(config, { recursive: true });
+  await writeFile(path.join(config, "sag.env"), "protected\n", { mode: 0o600 });
+  t.after(async () => rm(root, { recursive: true, force: true }));
+
+  const real = spawnSync("python3", [helperScript], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      SAG_CONFIG_ROOT: config,
+      SAG_LIFECYCLE_ACTION: "auth-fsync",
+    },
+  });
+  assert.equal(real.status, 0, real.stderr);
+  assert.equal(real.stdout, "");
+
+  const probe = [
+    "import importlib.util, os, stat, sys",
+    "spec = importlib.util.spec_from_file_location('lifecycle', sys.argv[1])",
+    "module = importlib.util.module_from_spec(spec)",
+    "spec.loader.exec_module(module)",
+    "module.CONFIG_ROOT = module.Path(sys.argv[2])",
+    "failure = sys.argv[3]",
+    "calls = []",
+    "def injected_fsync(fd):",
+    "    kind = 'dir' if stat.S_ISDIR(os.fstat(fd).st_mode) else 'file'",
+    "    calls.append(kind)",
+    "    if kind == failure: raise OSError('injected fsync failure')",
+    "module.os.fsync = injected_fsync",
+    "try:",
+    "    module.fsync_auth_env()",
+    "except BaseException:",
+    "    print(','.join(calls))",
+    "    raise",
+    "print(','.join(calls))",
+  ].join("\n");
+
+  const successfulProbe = spawnSync(
+    "python3",
+    ["-c", probe, helperScript, config, "none"],
+    { encoding: "utf8" },
+  );
+  assert.equal(successfulProbe.status, 0, successfulProbe.stderr);
+  assert.equal(successfulProbe.stdout.trim(), "file,dir");
+
+  for (const [failure, expectedCalls] of [["file", "file"], ["dir", "file,dir"]]) {
+    const failed = spawnSync(
+      "python3",
+      ["-c", probe, helperScript, config, failure],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(failed.status, 0);
+    assert.equal(failed.stdout.trim(), expectedCalls);
+  }
+});
+
 test("local auth reset inspects every project container twice and rotates only the bootstrap secret", async (t) => {
   const fixture = await lifecycleFixture(t, {
     FAKE_COMPOSE_RUNNING_IDS: "",
@@ -388,6 +449,10 @@ test("local auth reset inspects every project container twice and rotates only t
   assert.equal((commands.match(/docker compose .* ps -aq/g) || []).length, 2);
   assert.equal((commands.match(/docker inspect .* auth-one/g) || []).length, 2);
   assert.equal((commands.match(/docker inspect .* auth-two/g) || []).length, 2);
+  assert.ok(
+    commands.indexOf("SAG_LIFECYCLE_ACTION=auth-fsync")
+      < commands.indexOf("SAG_LIFECYCLE_ACTION=auth-reset"),
+  );
   const observable = [
     result.stdout,
     result.stderr,
@@ -456,7 +521,7 @@ test("local auth reset rechecks stopped state immediately before credential muta
   assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
 });
 
-test("local auth reset leaves a rotated inactive recovery token when the database transaction fails", async (t) => {
+test("local auth reset keeps the app stopped and reports unknown DB state on helper failure", async (t) => {
   const fixture = await lifecycleFixture(t, {
     FAKE_COMPOSE_RUNNING_IDS: "",
     FAKE_AUTH_CONTAINER_STATE: "exited",
@@ -483,7 +548,7 @@ test("local auth reset leaves a rotated inactive recovery token when the databas
     (await readdir(fixture.pkgEtc)).filter((name) => name.startsWith("sag.env.reset.")),
     [],
   );
-  assert.match(await readFile(fixture.tempLog, "utf8"), /new bootstrap remains inactive/i);
+  assert.match(await readFile(fixture.tempLog, "utf8"), /commit state is unknown/i);
 });
 
 test("local auth reset crash after env publish cannot restore the old bootstrap", async (t) => {
@@ -524,6 +589,27 @@ test("local auth reset does not touch the database if env publication fails", as
   assert.notEqual(result.status, 0);
   assert.equal(await readFile(envFile, "utf8"), before);
   assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
+});
+
+test("local auth reset aborts before the database when durable env sync fails", async (t) => {
+  const fixture = await lifecycleFixture(t, {
+    FAKE_COMPOSE_RUNNING_IDS: "",
+    FAKE_AUTH_CONTAINER_STATE: "exited",
+    FAKE_HELPER_AUTH_FSYNC_EXIT: "8",
+  });
+  const installed = runScript("install_callback", fixture.env);
+  assert.equal(installed.status, 0, installed.stderr);
+  const envFile = path.join(fixture.pkgEtc, "sag.env");
+  const before = await readFile(envFile, "utf8");
+
+  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
+
+  assert.notEqual(result.status, 0);
+  assert.notEqual(await readFile(envFile, "utf8"), before);
+  const commands = await readFile(fixture.commandLog, "utf8");
+  assert.match(commands, /SAG_LIFECYCLE_ACTION=auth-fsync/);
+  assert.doesNotMatch(commands, /SAG_LIFECYCLE_ACTION=auth-reset/);
+  assert.match(await readFile(fixture.tempLog, "utf8"), /durably sync/i);
 });
 
 test("container lifecycle helper cleans partial archives and preserves symlink semantics", async (t) => {

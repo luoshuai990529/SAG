@@ -4,12 +4,14 @@ import os
 from pathlib import Path, PurePosixPath
 import shutil
 import sqlite3
+import stat
 import sys
 import tarfile
 
 
 DATA_ROOT = Path(os.environ.get("SAG_DATA_ROOT", "/data"))
 BACKUP_ROOT = Path(os.environ.get("SAG_BACKUP_ROOT", "/backup"))
+CONFIG_ROOT = Path(os.environ.get("SAG_CONFIG_ROOT", "/config"))
 
 
 def data_size_kib() -> None:
@@ -101,6 +103,27 @@ def reset_password_auth() -> None:
         connection.close()
 
 
+def fsync_auth_env() -> None:
+    secret_file = CONFIG_ROOT / "sag.env"
+    flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(secret_file, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise RuntimeError("/config/sag.env must be a regular file")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_descriptor = os.open(CONFIG_ROOT, directory_flags)
+    try:
+        if not stat.S_ISDIR(os.fstat(directory_descriptor).st_mode):
+            raise RuntimeError("/config must be a directory")
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+
 def main() -> int:
     os.umask(0o077)
     action = os.environ.get("SAG_LIFECYCLE_ACTION")
@@ -109,6 +132,7 @@ def main() -> int:
         "backup": create_backup,
         "delete": delete_data_contents,
         "auth-reset": reset_password_auth,
+        "auth-fsync": fsync_auth_env,
     }
     if action not in actions:
         print("unsupported SAG_LIFECYCLE_ACTION", file=sys.stderr)

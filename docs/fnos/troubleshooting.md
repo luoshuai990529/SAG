@@ -133,11 +133,18 @@ fnOS 登录失败统一返回“身份验证失败”，不会说明用户、密
 恢复。恢复命令不打印新 bootstrap，并且会两次检查项目的每个容器；只有 `created`
 和 `exited` 可继续，paused/restarting/未知状态及检查失败都必须先处理。
 
-命令先原子发布新的 `0600` bootstrap，再执行数据库事务。若日志提示数据库 reset
-失败，新 bootstrap 仍未激活，旧 bootstrap 已从活动配置移除；保持应用停止并重跑
-同一命令，重试会再次轮换凭据。若在密钥发布前失败，数据库未改变。任何失败路径
-都不得手工写回旧 bootstrap，也不得先启动应用。不要尝试历史隐式默认密码或通过
-改名绕过认证。
+命令先原子发布新的 `0600` bootstrap，再通过离线 helper 依次 fsync 文件和配置
+目录；同步失败会在数据库 reset 前闭锁，但新文件可能已替换活动路径，应保持停服并
+重跑。
+
+一旦日志中已经出现 `SAG_LIFECYCLE_ACTION=auth-reset`，Docker/helper 客户端失败
+不能证明 SQLite 事务未提交：新 bootstrap 可能已激活，也可能未激活。不要启动应用
+或远程试探；直接在停服状态重跑本地 reset。重跑是安全的，会再次发布全新 bootstrap
+并把数据库收敛到待初始化状态。任何失败路径都不得手工写回旧 bootstrap。
+
+故障证据只记录 UTC 时间、退出码/信号、脱敏后的 `auth-fsync -> auth-reset` 顺序、
+`sag.env` 普通文件/`0600` 状态和成功重跑后旧 JWT 被拒绝；不得记录密钥文件内容或
+其凭据值。不要尝试历史隐式默认密码或通过改名绕过认证。
 
 网关按直接 TCP 对端地址对 `/api/v1/auth/login` 和 `/api/v1/auth/register` 采用
 `5 次/分钟、burst=3` 的限流，拒绝时返回 `429` 和 `Retry-After: 60`。它不信任

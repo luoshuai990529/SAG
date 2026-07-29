@@ -46,7 +46,7 @@
 | FPK-01 | hello-docker 安装、打开、启停、卸载 | 待执行 | fnOS 管理会话需要用户登录 | `docs/fnos/evidence/<date>/fpk-01/` |
 | FPK-02 | SAG 全新安装、桌面打开、无模型密钥启动 | 阻塞 | 依赖 PKG-05、NET-02 和 fnOS 登录 | `docs/fnos/evidence/<date>/fpk-02/` |
 | FPK-03 | 密码模式首次初始化与日常登录 | 待执行 | 一次性私有 bootstrap + ≥12 位且 UTF-8 ≤72 字节的密码创建首个用户；缺失/错误密码、仅名字、不同名字和改名均以相同错误拒绝；正确名字+密码成功；初始化后 bootstrap 重放及第二次公开注册被拒绝。证据不得包含 bootstrap、密码或 `sag.env` 内容 | `docs/fnos/evidence/<date>/fpk-03/` |
-| FPK-04 | 本地管理员认证恢复 | 待执行 | 两次枚举并检查全部项目容器，仅 `created`/`exited` 可继续；先原子发布 `0600` 新 bootstrap，再提交数据库 reset。检查竞态、发布失败、发布后崩溃和 DB 失败均可安全重试且旧 bootstrap 不会重新有效；成功后旧 JWT 失效，只有原名字+新密码+新 bootstrap 可初始化一次，错误名字/停用用户拒绝 | `docs/fnos/evidence/<date>/fpk-04/` |
+| FPK-04 | 本地管理员认证恢复 | 待执行 | 两次枚举并检查全部项目容器，仅 `created`/`exited` 可继续；先原子发布 `0600` 新 bootstrap，依次 fsync 文件/目录，再调用数据库 reset。检查竞态、发布失败、两个 fsync 失败均在 DB 前闭锁；DB helper 客户端失败按提交状态未知处理，保持停服重跑并发布又一个新值。证据只含退出状态、脱敏顺序、文件模式及旧 JWT 拒绝，不含凭据。成功后只有原名字+新密码+新 bootstrap 可初始化一次，错误名字/停用用户拒绝 | `docs/fnos/evidence/<date>/fpk-04/` |
 | NET-03 | HTTP/TLS 信任边界 | 待执行 | `:3080` 仅在可信隔离 LAN/受控 VPN 使用；公共/共享 Wi-Fi 禁止输入任何凭据。任何不可信访问以外部 HTTPS 反向代理验收为前置门禁；HTTPS 下 Cookie 有 Secure，当前 Bearer 架构不支持 HttpOnly | `docs/fnos/evidence/<date>/net-03/` |
 | BIZ-01 | Markdown/PDF 上传、抽取、索引、检索 | 待执行 | 凭据私下录入且不进入证据 | `docs/fnos/evidence/<date>/biz-01/` |
 | BIZ-02 | SSE 流式问答和引用打开 | 待执行 | 浏览器请求保持 `:3080` 同源，无 CORS/SSE 中断 | `docs/fnos/evidence/<date>/biz-02/` |

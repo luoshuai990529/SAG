@@ -335,6 +335,7 @@ test("structural mode renders and fnpack-builds an official package only in a te
     "lifecycle-backup": [["/data", true], ["/backup", false], ["/opt/sag-lifecycle.py", true]],
     "lifecycle-delete": [["/data", false], ["/opt/sag-lifecycle.py", true]],
     "lifecycle-auth-reset": [["/data", false], ["/opt/sag-lifecycle.py", true]],
+    "lifecycle-auth-fsync": [["/config", false], ["/opt/sag-lifecycle.py", true]],
   };
   for (const [name, mounts] of Object.entries(expectedMounts)) {
     const service = helperServices[name];
