@@ -5,7 +5,7 @@
 ## 当前结论
 
 - 候选包声明 `platform=x86`、`os_min_version=1.2.0302`，当前认证目标仅为 x86-64 VMware fnOS 测试机。
-- 安装时需要 fnOS 联网拉取公开 GHCR 镜像。发布包必须使用 API、Web、Nginx 的 manifest-list digest，不能使用 `latest` 或可变标签。
+- 安装时需要 fnOS 在不登录仓库的情况下匿名拉取公开 GHCR 镜像和 Docker Hub 官方 Nginx 镜像。发布包必须使用 API、Web、Nginx 的 manifest-list digest，不能使用 `latest` 或可变标签。
 - API `8000` 和 Web `3000` 只在 Compose 网络内可见；用户入口为 `http://<fnOS 可达地址>:3080`。
 - Mac 已完成 Docker、Buildx、Compose、`fnpack` 和 `hello-world` 本地准备。`appcenter-cli` 是 fnOS 设备上的工具，不是 Mac 必装工具。
 - 源码、生命周期测试和临时结构包已经具备；公开 GHCR 镜像、正式 `.fpk`、Windows `3080` NAT、防火墙和 fnOS UI 生命周期验收仍是外部门禁。
@@ -31,10 +31,10 @@
 文档中的通用示例使用以下变量，不把某次 DHCP 地址写进脚本：
 
 ```bash
-WINDOWS_HOST=<Windows 在 Mac 所在局域网中的地址>
-FNOS_VM_IP=<fnOS 在 VMware NAT 网段中的固定地址>
-FNOS_ADMIN_PORT=<fnOS 管理端口的 Windows 转发端口>
-SAG_PORT=3080
+WINDOWS_HOST="192.0.2.10"  # 替换为 Windows 在 Mac 所在局域网中的地址
+FNOS_VM_IP="192.0.2.20"    # 替换为 fnOS 在 VMware NAT 网段中的固定地址
+FNOS_ADMIN_PORT="15666"    # 替换为 fnOS 管理端口的 Windows 转发端口
+SAG_PORT="3080"
 ```
 
 当前测试环境单独记录如下：
@@ -43,7 +43,7 @@ SAG_PORT=3080
 | --- | --- | --- |
 | Windows Wi-Fi 地址 | `192.168.50.178` | 已验证，可能随 DHCP 变化 |
 | fnOS VM 固定地址 | `192.168.252.10` | 已验证 |
-| fnOS 管理入口 | `http://192.168.50.178:15666` | Mac 已打开登录页 |
+| fnOS 管理入口 | `http://192.168.50.178:15666` | 前序交接记录已打开登录页；证据待归档 |
 | SAG 计划入口 | `http://192.168.50.178:3080` | 待配置 NAT、防火墙并安装候选包后验证 |
 | Windows 允许来源 | `192.168.50.0/24` | `3080` 规则待验证 |
 

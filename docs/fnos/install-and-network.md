@@ -38,14 +38,59 @@ New-NetFirewallRule `
   -Profile Private
 ```
 
-检查是否存在范围更大的同端口 Allow 规则；若存在，应先确认用途再收紧，不能依靠规则名称判断实际访问范围：
+审计所有已启用的入站 Allow 规则。端口为 `Any` 或范围包含 `3080` 的规则都可能绕过上面的 `/24` 限制；必须同时查看远端地址、协议、Profile、程序和服务作用域：
 
 ```powershell
-Get-NetFirewallPortFilter |
-  Where-Object LocalPort -eq 3080 |
-  Get-NetFirewallRule |
-  Format-Table DisplayName,Enabled,Direction,Action,Profile
+function Test-PortIncludes3080 {
+  param([object]$LocalPort)
+
+  foreach ($entry in @($LocalPort)) {
+    foreach ($token in ("$entry" -split ",")) {
+      $value = $token.Trim()
+      if ($value -eq "Any" -or $value -eq "3080") {
+        return $true
+      }
+      if ($value -match "^(\d+)-(\d+)$") {
+        if (3080 -ge [int]$Matches[1] -and 3080 -le [int]$Matches[2]) {
+          return $true
+        }
+      }
+    }
+  }
+  return $false
+}
+
+$rows = foreach ($rule in Get-NetFirewallRule `
+  -Enabled True -Direction Inbound -Action Allow) {
+  $portFilters = @($rule | Get-NetFirewallPortFilter)
+  if (-not ($portFilters | Where-Object {
+    Test-PortIncludes3080 $_.LocalPort
+  })) {
+    continue
+  }
+
+  $addressFilters = @($rule | Get-NetFirewallAddressFilter)
+  $applicationFilters = @($rule | Get-NetFirewallApplicationFilter)
+  $serviceFilters = @($rule | Get-NetFirewallServiceFilter)
+
+  [pscustomobject]@{
+    DisplayName   = $rule.DisplayName
+    Enabled       = $rule.Enabled
+    Direction     = $rule.Direction
+    Action        = $rule.Action
+    Profile       = $rule.Profile
+    Protocol      = ($portFilters.Protocol -join ",")
+    LocalPort     = ($portFilters.LocalPort -join ",")
+    RemoteAddress = ($addressFilters.RemoteAddress -join ",")
+    Program       = ($applicationFilters.Program -join ",")
+    Service       = ($serviceFilters.Service -join ",")
+  }
+}
+
+$rows | Sort-Object DisplayName | Format-List
 ```
+
+逐条确认输出：适用于 `3080` 的通用规则必须禁用/删除，或通过 `RemoteAddress` 及程序/服务作用域证明不会扩大访问；目标 SAG 规则应显示 `RemoteAddress=192.168.50.0/24`、TCP、Private。不能只检查名字中含 `SAG` 的规则。
 
 不要配置路由器公网端口映射。SAG 候选版只面向可信局域网。
 
@@ -66,7 +111,7 @@ ghcr.io/luoshuai990529/sag-web
 
 每个镜像包含 `linux/amd64` 和 `linux/arm64`，并带候选版本和 commit SHA 标签。工作流对 amd64 执行 API/Web 运行时冒烟，对 arm64 执行构建和清单检查。候选包仍只声明 x86；arm64 镜像构建成功不等于 ARM64 fnOS 已认证。
 
-发布后把两个 Packages 设为 Public，并记录 manifest-list digest：
+发布后把两个 Packages 设为 Public，并记录 manifest-list digest。fnOS 安装期间不会配置 registry 凭据，因此必须能匿名拉取 GHCR 和 Docker Hub：
 
 ```bash
 docker buildx imagetools inspect ghcr.io/luoshuai990529/sag-api:1.4.0-fnos.1
@@ -80,13 +125,28 @@ docker buildx imagetools inspect nginx:1.27-alpine
 
 ```bash
 mkdir -p dist/fnos
+API_DIGEST="${API_DIGEST:-REPLACE_WITH_SAG_API_SHA256}"
+WEB_DIGEST="${WEB_DIGEST:-REPLACE_WITH_SAG_WEB_SHA256}"
+NGINX_DIGEST="sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+
+case "${API_DIGEST}:${WEB_DIGEST}" in
+  *REPLACE_WITH_*)
+    printf '%s\n' "Set API_DIGEST and WEB_DIGEST to published sha256 digests." >&2
+    exit 2
+    ;;
+esac
+
 node scripts/build-fnos-package.mjs \
-  --api-image 'ghcr.io/luoshuai990529/sag-api@sha256:<64-hex>' \
-  --web-image 'ghcr.io/luoshuai990529/sag-web@sha256:<64-hex>' \
-  --nginx-image 'docker.io/library/nginx@sha256:<64-hex>' \
+  --api-image "ghcr.io/luoshuai990529/sag-api@${API_DIGEST}" \
+  --web-image "ghcr.io/luoshuai990529/sag-web@${WEB_DIGEST}" \
+  --nginx-image "docker.io/library/nginx@${NGINX_DIGEST}" \
   --output 'dist/fnos/sag-1.4.0-fnos.1.fpk'
-shasum -a 256 'dist/fnos/sag-1.4.0-fnos.1.fpk' \
-  > 'dist/fnos/sag-1.4.0-fnos.1.fpk.sha256'
+(
+  cd dist/fnos
+  shasum -a 256 'sag-1.4.0-fnos.1.fpk' \
+    > 'sag-1.4.0-fnos.1.fpk.sha256'
+  shasum -a 256 -c 'sag-1.4.0-fnos.1.fpk.sha256'
+)
 ```
 
 构建脚本会：
@@ -96,6 +156,8 @@ shasum -a 256 'dist/fnos/sag-1.4.0-fnos.1.fpk' \
 3. 将 digest 渲染进临时包目录；
 4. 运行发布 Compose 校验和 `fnpack build`；
 5. 只复制最终 `.fpk` 到指定输出。
+
+校验文件在输出目录内用 `.fpk` 的 basename 生成并立即验证；分发时必须把 `.fpk` 与 `.sha256` 一起移动，接收方进入两者所在目录后执行同一条 `shasum -a 256 -c`。
 
 源码包中的 `__SAG_*_IMAGE__` 是构建占位符，不能直接安装。`--structural-test` 仅用于临时测试包，使用 `test.invalid` 引用，绝不能分发或安装。
 

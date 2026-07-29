@@ -12,7 +12,9 @@
 └── 其他当前或未来的数据文件
 ```
 
-只复制 `sag.db` 会得到不完整备份，不能用于升级回滚或迁移。配置密钥位于 `${TRIM_PKGETC}/sag.env`，应独立保护；不要把密钥提交到仓库或放入验收截图。
+只复制 `sag.db` 会得到不完整备份，不能用于升级回滚或迁移。`sag.db` 会明文保存页面中配置的 LLM、Embedding 和 MinerU 密钥，归档还包含用户上传原文、索引和知识库内容，因此完整备份属于**含凭据的高敏感数据**。配置密钥 `${TRIM_PKGETC}/sag.env` 还应独立保护；任何备份、数据库或密钥都不得进入公开共享目录、验收证据、日志、截图或代码仓库。
+
+备份目录应属于受限私有共享，目录权限/ACL 只授予维护者。写入前使用 `umask 077`，目录至少为 `0700`，归档和校验文件至少为 `0600`。复制到其他设备或云存储前，使用组织批准的工具或加密卷先加密，再验证加密副本；不得通过明文公共链接、聊天附件或证据目录传输。
 
 ## 自动升级保护
 
@@ -56,20 +58,34 @@ DATA_DIR="$(docker inspect sag-api \
   --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}')"
 test -n "$DATA_DIR"
 test -d "$DATA_DIR"
-BACKUP_ROOT=/vol1/<用户共享目录>/sag-backups
+BACKUP_ROOT="${BACKUP_ROOT:-/vol1/REPLACE_WITH_PRIVATE_SHARE/sag-backups}"
+case "$BACKUP_ROOT" in
+  *REPLACE_WITH_*)
+    printf '%s\n' "Set BACKUP_ROOT to a restricted private fnOS share." >&2
+    exit 2
+    ;;
+esac
+
+umask 077
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+ARCHIVE_NAME="sag-data-$STAMP.tar.gz"
 mkdir -p "$BACKUP_ROOT"
+chmod 700 "$BACKUP_ROOT"
 tar -C "$(dirname "$DATA_DIR")" -czf \
-  "$BACKUP_ROOT/sag-data-$STAMP.tar.gz.tmp" \
+  "$BACKUP_ROOT/$ARCHIVE_NAME.tmp" \
   "$(basename "$DATA_DIR")"
-mv "$BACKUP_ROOT/sag-data-$STAMP.tar.gz.tmp" \
-  "$BACKUP_ROOT/sag-data-$STAMP.tar.gz"
-sha256sum "$BACKUP_ROOT/sag-data-$STAMP.tar.gz" \
-  > "$BACKUP_ROOT/sag-data-$STAMP.tar.gz.sha256"
-tar -tzf "$BACKUP_ROOT/sag-data-$STAMP.tar.gz" >/dev/null
+mv "$BACKUP_ROOT/$ARCHIVE_NAME.tmp" "$BACKUP_ROOT/$ARCHIVE_NAME"
+chmod 600 "$BACKUP_ROOT/$ARCHIVE_NAME"
+(
+  cd "$BACKUP_ROOT"
+  sha256sum "$ARCHIVE_NAME" > "$ARCHIVE_NAME.sha256"
+  chmod 600 "$ARCHIVE_NAME.sha256"
+  sha256sum -c "$ARCHIVE_NAME.sha256"
+  tar -tzf "$ARCHIVE_NAME" >/dev/null
+)
 ```
 
-`/vol1/<用户共享目录>` 只是示例，必须替换成 fnOS 上实际的外部共享目录。完成后重新启动并检查 ready：
+必须把 `BACKUP_ROOT` 替换成 fnOS 上实际的受限私有共享目录，并复核 ACL。校验文件只写归档 basename，归档与 `.sha256` 一起移动后仍可在新目录验证。完成后重新启动并检查 ready：
 
 ```bash
 appcenter-cli start sag
@@ -82,9 +98,21 @@ curl -fsS http://127.0.0.1:3080/api/v1/system/ready
 
 ```bash
 set -euo pipefail
-ARCHIVE=/vol1/<用户共享目录>/sag-backups/sag-data-<timestamp>.tar.gz
-sha256sum -c "$ARCHIVE.sha256"
-tar -tzf "$ARCHIVE"
+ARCHIVE_DIR="${ARCHIVE_DIR:-/vol1/REPLACE_WITH_PRIVATE_SHARE/sag-backups}"
+ARCHIVE_NAME="${ARCHIVE_NAME:-REPLACE_WITH_ARCHIVE_BASENAME.tar.gz}"
+case "${ARCHIVE_DIR}:${ARCHIVE_NAME}" in
+  *REPLACE_WITH_*)
+    printf '%s\n' "Set ARCHIVE_DIR and ARCHIVE_NAME to the verified backup." >&2
+    exit 2
+    ;;
+esac
+
+(
+  cd "$ARCHIVE_DIR"
+  sha256sum -c "$ARCHIVE_NAME.sha256"
+  tar -tzf "$ARCHIVE_NAME"
+)
+ARCHIVE="$ARCHIVE_DIR/$ARCHIVE_NAME"
 appcenter-cli stop sag
 ```
 

@@ -5,14 +5,19 @@
 ## 入口不可达
 
 ```bash
-curl -v --connect-timeout 5 http://<WINDOWS_HOST>:3080/
-curl -v --connect-timeout 5 http://<WINDOWS_HOST>:3080/api/v1/system/ready
+WINDOWS_HOST="${WINDOWS_HOST:-192.0.2.10}"
+if [ "$WINDOWS_HOST" = "192.0.2.10" ]; then
+  printf '%s\n' "Set WINDOWS_HOST to the current Windows LAN address." >&2
+  exit 2
+fi
+curl -v --connect-timeout 5 "http://${WINDOWS_HOST}:3080/"
+curl -v --connect-timeout 5 "http://${WINDOWS_HOST}:3080/api/v1/system/ready"
 ```
 
 按顺序检查：
 
 1. Windows 地址是否因 DHCP 改变；
-2. VMware NAT 是否存在 TCP `3080 -> <FNOS_VM_IP>:3080`；
+2. VMware NAT 是否存在 TCP `3080 -> ${FNOS_VM_IP}:3080`；
 3. Windows 防火墙是否只允许预期的 `192.168.50.0/24`；
 4. fnOS 上 `3080` 是否被其他应用占用；
 5. `manifest.service_port`、Compose `${TRIM_SERVICE_PORT}:80` 和 UI `{port}` 是否一致；
@@ -34,15 +39,28 @@ curl -fsS --max-time 5 http://127.0.0.1:3080/api/v1/system/ready
 ## 镜像拉取失败
 
 ```bash
-docker buildx imagetools inspect \
-  ghcr.io/luoshuai990529/sag-api@sha256:<digest>
-docker buildx imagetools inspect \
-  ghcr.io/luoshuai990529/sag-web@sha256:<digest>
+API_DIGEST="${API_DIGEST:-REPLACE_WITH_SAG_API_SHA256}"
+WEB_DIGEST="${WEB_DIGEST:-REPLACE_WITH_SAG_WEB_SHA256}"
+NGINX_DIGEST="sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+case "${API_DIGEST}:${WEB_DIGEST}" in
+  *REPLACE_WITH_*)
+    printf '%s\n' "Set API_DIGEST and WEB_DIGEST from the release record." >&2
+    exit 2
+    ;;
+esac
+
+docker pull \
+  "ghcr.io/luoshuai990529/sag-api@${API_DIGEST}"
+docker pull \
+  "ghcr.io/luoshuai990529/sag-web@${WEB_DIGEST}"
+docker pull \
+  "docker.io/library/nginx@${NGINX_DIGEST}"
 ```
 
 确认：
 
-- Packages 为 Public；
+- GHCR Packages 为 Public，fnOS 不登录 GHCR 也能匿名拉取两个 digest；
+- fnOS 不登录 Docker Hub 也能匿名拉取固定的 Nginx digest；
 - fnOS DNS、时间和 HTTPS 出站正常；
 - digest 与发布记录完全一致；
 - manifest list 包含 `linux/amd64`；
@@ -74,7 +92,14 @@ docker inspect sag-api sag-web sag-gateway
 ## 密钥或登录异常
 
 ```bash
-SECRET_FILE=<从 fnOS 应用运行时信息确认的 TRIM_PKGETC>/sag.env
+TRIM_PKGETC_PATH="${TRIM_PKGETC_PATH:-REPLACE_WITH_TRIM_PKGETC}"
+case "$TRIM_PKGETC_PATH" in
+  *REPLACE_WITH_*)
+    printf '%s\n' "Set TRIM_PKGETC_PATH from fnOS application runtime info." >&2
+    exit 2
+    ;;
+esac
+SECRET_FILE="${TRIM_PKGETC_PATH}/sag.env"
 stat "$SECRET_FILE"
 ```
 
