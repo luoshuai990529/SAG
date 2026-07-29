@@ -65,8 +65,8 @@ if [[ "$1 $2 $3 \${4:-}" == "buildx imagetools inspect --raw" ]]; then
   esac
 elif [[ "$1 $2 $3 \${4:-} \${5:-}" == "buildx imagetools inspect --format {{.Manifest.Digest}}" ]]; then
   case "\${6:-}" in
-    *sag-api*) printf '%s\\n' "$FAKE_API_TAG_DIGEST" ;;
-    *sag-web*) printf '%s\\n' "$FAKE_WEB_TAG_DIGEST" ;;
+    ghcr.io/luoshuai990529/sag-api:1.4.0-fnos.1) printf '%s\\n' "$FAKE_API_TAG_DIGEST" ;;
+    ghcr.io/luoshuai990529/sag-web:1.4.0-fnos.1) printf '%s\\n' "$FAKE_WEB_TAG_DIGEST" ;;
     *) exit 8 ;;
   esac
 elif [[ "$1 $2" == "compose -f" ]]; then
@@ -232,6 +232,19 @@ test("release build rejects an API digest not bound to the candidate tag", async
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /api.*candidate tag.*digest/i);
+});
+
+test("release build rejects a Web digest not bound to the exact candidate tag", async (t) => {
+  const root = await tempRoot(t);
+  const result = build([
+    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--nginx-image", `docker.io/library/nginx@${digestC}`,
+    "--output", path.join(root, "candidate.fpk"),
+  ], await fakeRegistry(t, { webTagDigest: digestD }));
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /web.*candidate tag.*digest/i);
 });
 
 test("release build accepts candidate-bound multi-platform API and Web indexes", async (t) => {

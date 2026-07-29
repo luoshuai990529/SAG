@@ -11,8 +11,10 @@
 - 源码、生命周期测试和临时结构包已经具备；公开 GHCR 镜像、正式 `.fpk`、Windows `3080` NAT、防火墙和 fnOS UI 生命周期验收仍是外部门禁。
 - 候选发布先在 CI runner 本地 smoke amd64，再写入每次运行唯一的 GHCR staging tag；
   只有原始多架构 index 与 staging 运行时 OCI 元数据都通过检查后，才按 digest
-  提升为不可重写的候选和 commit 标签。staging tag 的安全清理需要 tag 级 GHCR
-  操作，不能按 digest 删除。
+  对账式地提升候选和 commit 标签：缺失则创建、已指向同一 digest 则接受、指向
+  不同 digest 则失败。该流程不能替代 GHCR 的 registry 级不可变策略；包消费者
+  必须继续使用 digest。staging tag 的安全清理需要 tag 级 GHCR 操作，不能按
+  digest 删除。
 - 正式发布前还必须补齐 x86-64 实机、ARM64 fnOS 实机和应用中心上架验证。本候选版不声明 ARM64 fnOS 支持。
 
 ## 文档导航

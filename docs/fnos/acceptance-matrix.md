@@ -31,7 +31,7 @@
 | CODE-02 | API pytest | 通过 | `uv run python -m pytest -q`：192 passed，1 条 SQLAlchemy warning | 命令摘要；截图不适用 |
 | CODE-03 | Web 单测 | 通过 | `npm run test:unit`：47 files、354 tests passed | 命令摘要；截图不适用 |
 | CODE-04 | Web 类型/Lint/生产构建 | 通过 | `tsc --noEmit`、ESLint 0 warning、Next.js 15.5.20 production build 均通过 | 命令摘要；截图不适用 |
-| PKG-01 | 发布 Compose 拒绝可变镜像、弱密钥和额外端口 | 通过 | 发布、生命周期、包结构合计 28 tests passed | 命令摘要；截图不适用 |
+| PKG-01 | 发布 Compose 拒绝可变镜像、弱密钥和额外端口 | 通过 | CI 运行发布 Compose、包、生命周期与文档行为测试；以 CI 日志的具体测试清单为准，不维护易过期的合计数字 | 命令摘要；截图不适用 |
 | PKG-02 | 生命周期脚本与完整数据冷备行为 | 通过 | 包含空间/命令失败、冷备原子发布、失败后服务恢复和卸载选择回归 | 命令摘要；截图不适用 |
 | PKG-03 | Shell/JSON/Compose 静态检查 | 通过 | 9 个 Bash 脚本、4 个 JSON、源码与包模板 Compose config 均通过 | 命令摘要；截图不适用 |
 | PKG-04 | 临时结构包 `fnpack build` 和 SHA-256 | 通过 | 使用 `test.invalid` digest 仅在临时目录构建；SHA-256 `3cd3fc69ff43a55ccdf256f4bb3473c6f27bd47c4bd258f80d96dc72a40213fc`；不可分发 | 命令摘要；截图不适用 |
@@ -62,7 +62,7 @@
 
 | ID | 门禁 | 当前结论 |
 | --- | --- | --- |
-| REL-01 | GHCR API/Web 公开多架构镜像 | 阻塞：仅 `luoshuai990529/SAG@main` 可手动运行候选工作流；它必须先完成 CI、本地 amd64 smoke、唯一 staging index 与元数据检查，再按 digest 提升不可重写的候选/commit 标签。当前尚未发布，包不可匿名检查。 |
+| REL-01 | GHCR API/Web 公开多架构镜像 | 阻塞：仅 `luoshuai990529/SAG@main` 可手动运行候选工作流；它必须先完成 CI、本地 amd64 smoke、唯一 staging index 与元数据检查，再按已记录 digest 对账式提升候选/commit 标签（缺失创建、同 digest 接受、不同 digest 失败）。这不是 registry 级不可变声明，包仍须固定 digest。当前尚未发布，包不可匿名检查。 |
 | REL-02 | x86-64 fnOS 实机 | 待执行：VM 结果不能替代实机认证 |
 | REL-03 | ARM64 fnOS 实机 | 不适用：本候选包声明 x86；正式声明 ARM64 支持前必须新增实机认证 |
 | REL-04 | 飞牛应用中心上架 | 待执行：发布材料、审核和平台反馈属于候选版之后的门禁 |

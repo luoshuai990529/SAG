@@ -10,20 +10,21 @@ on:
         type: string
 
 concurrency:
-  group: fnos-image-release-${{ github.repository }}-${{ inputs.candidate_version }}
+  group: fnos-candidate-${{ github.repository }}-${{ inputs.candidate_version }}
   cancel-in-progress: false
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   quality:
     if: github.repository == 'luoshuai990529/SAG' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci.yml
 
   candidate:
-    name: Verify reviewed candidate and reserve final tags
+    name: Verify reviewed candidate metadata
     needs: quality
     if: github.repository == 'luoshuai990529/SAG' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
@@ -52,31 +53,13 @@ jobs:
           test "$CANDIDATE_VERSION" = "$version"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
           printf 'staging_tag=staging-fnos-%s-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Preserve immutable candidate and commit tags
-        shell: bash
-        env:
-          CANDIDATE_VERSION: ${{ steps.metadata.outputs.version }}
-          COMMIT_TAG: sha-${{ github.sha }}
-        run: |
-          set -euo pipefail
-          for image in ghcr.io/luoshuai990529/sag-api ghcr.io/luoshuai990529/sag-web; do
-            for tag in "$CANDIDATE_VERSION" "$COMMIT_TAG"; do
-              if docker manifest inspect "$image:$tag" >/dev/null 2>&1; then
-                echo "::error::Refusing to replace existing image tag $image:$tag."
-                exit 1
-              fi
-            done
-          done
 
   local-amd64-smoke:
     name: Build and smoke local linux/amd64 images
     needs: candidate
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -129,6 +112,9 @@ jobs:
     name: Publish multi-platform staging images
     needs: [candidate, local-amd64-smoke]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -164,14 +150,19 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.candidate.outputs.version }}
 
-  inspect-and-promote:
-    name: Inspect staging indexes and promote verified digests
+  inspect-staging:
+    name: Capture verified staging digests
     needs: [candidate, staging]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      api_digest: ${{ steps.digests.outputs.api_digest }}
+      web_digest: ${{ steps.digests.outputs.web_digest }}
     env:
       CANDIDATE_VERSION: ${{ needs.candidate.outputs.version }}
       STAGING_TAG: ${{ needs.candidate.outputs.staging_tag }}
-      COMMIT_TAG: sha-${{ github.sha }}
     steps:
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
@@ -179,41 +170,147 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Verify staged indexes and amd64 runtime metadata
+      - id: digests
+        name: Resolve, validate, and record staging digests once
         shell: bash
         run: |
           set -euo pipefail
-          verify_staged_image() {
+          resolve_verified_digest() {
             local image="$1"
-            docker buildx imagetools inspect --raw "$image:$STAGING_TAG" | jq -e '
+            local digest
+            digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$image:$STAGING_TAG")"
+            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+              echo "::error::Staging tag $image:$STAGING_TAG did not resolve to a sha256 digest."
+              exit 1
+            }
+            docker buildx imagetools inspect --raw "$image@$digest" | jq -e '
               .mediaType as $type
               | ($type == "application/vnd.oci.image.index.v1+json" or $type == "application/vnd.docker.distribution.manifest.list.v2+json")
               and ([.manifests[].platform | select(.os == "linux" and .architecture == "amd64")] | length > 0)
               and ([.manifests[].platform | select(.os == "linux" and .architecture == "arm64")] | length > 0)
             ' >/dev/null
-            docker pull --platform linux/amd64 "$image:$STAGING_TAG"
-            test "$(docker image inspect "$image:$STAGING_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$GITHUB_SHA"
-            test "$(docker image inspect "$image:$STAGING_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')" = "$CANDIDATE_VERSION"
+            docker pull --platform linux/amd64 "$image@$digest"
+            test "$(docker image inspect "$image@$digest" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$GITHUB_SHA"
+            test "$(docker image inspect "$image@$digest" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')" = "$CANDIDATE_VERSION"
+            printf '%s\n' "$digest"
           }
-          verify_staged_image ghcr.io/luoshuai990529/sag-api
-          verify_staged_image ghcr.io/luoshuai990529/sag-web
-      - name: Promote verified index digests without rebuilding
-        shell: bash
-        run: |
-          set -euo pipefail
-          promote() {
-            local image="$1"
-            local digest
-            digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$image:$STAGING_TAG")"
-            test "$digest" != ""
-            docker buildx imagetools create \
-              --tag "$image:$CANDIDATE_VERSION" \
-              --tag "$image:$COMMIT_TAG" \
-              "$image@$digest"
-          }
-          promote ghcr.io/luoshuai990529/sag-api
-          promote ghcr.io/luoshuai990529/sag-web
+          api_digest="$(resolve_verified_digest ghcr.io/luoshuai990529/sag-api)"
+          web_digest="$(resolve_verified_digest ghcr.io/luoshuai990529/sag-web)"
+          printf 'api_digest=%s\n' "$api_digest" >> "$GITHUB_OUTPUT"
+          printf 'web_digest=%s\n' "$web_digest" >> "$GITHUB_OUTPUT"
+          printf '{"api_digest":"%s","web_digest":"%s"}\n' "$api_digest" "$web_digest" > verified-digests.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fnos-verified-digests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: verified-digests.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Record staging retention
         shell: bash
         run: |
-          echo "::notice::Staging tags $STAGING_TAG are retained. Deleting a registry manifest by digest could remove the promoted immutable content; clean staging tags only with a registry operation that targets the tag alone."
+          echo "::notice::Staging tags $STAGING_TAG are retained. Delete only by an audited tag-specific GHCR operation; deleting a digest could remove promoted content."
+
+  promote:
+    name: Reconcile final tags to verified digests
+    needs: [candidate, inspect-staging]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      CANDIDATE_VERSION: ${{ needs.candidate.outputs.version }}
+      COMMIT_TAG: sha-${{ github.sha }}
+      API_DIGEST: ${{ needs.inspect-staging.outputs.api_digest }}
+      WEB_DIGEST: ${{ needs.inspect-staging.outputs.web_digest }}
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Reconcile and post-verify all final tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          require_digest() {
+            [[ "$1" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+              echo "::error::Expected a verified sha256 digest, received $1."
+              exit 1
+            }
+          }
+          inspect_final_tag() {
+            local reference="$1"
+            local output status
+            set +e
+            output="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$reference" 2>&1)"
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
+              [[ "$output" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+                echo "::error::Final tag $reference resolved to an invalid digest: $output" >&2
+                return 1
+              }
+              printf '%s\n' "$output"
+              return 0
+            fi
+            if grep -Eiq 'manifest unknown|name unknown|manifest .* not found|not found: manifest' <<< "$output"; then
+              return 10
+            fi
+            echo "::error::Could not inspect final tag $reference: $output" >&2
+            return 1
+          }
+          reconcile_tag() {
+            local image="$1"
+            local tag="$2"
+            local expected="$3"
+            local reference="$image:$tag"
+            local actual status
+            set +e
+            actual="$(inspect_final_tag "$reference")"
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
+              [ "$actual" = "$expected" ] || {
+                echo "::error::Final tag $reference exists but points to a different digest ($actual)." >&2
+                return 1
+              }
+              return 0
+            fi
+            [ "$status" -eq 10 ] || return "$status"
+            # Recheck immediately before creating an absent tag to narrow races.
+            set +e
+            actual="$(inspect_final_tag "$reference")"
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
+              [ "$actual" = "$expected" ] || {
+                echo "::error::Final tag $reference appeared with a different digest ($actual)." >&2
+                return 1
+              }
+              return 0
+            fi
+            [ "$status" -eq 10 ] || return "$status"
+            docker buildx imagetools create --tag "$reference" "$image@$expected"
+          }
+          post_verify_tag() {
+            local reference="$1"
+            local expected="$2"
+            local actual
+            actual="$(inspect_final_tag "$reference")" || return 1
+            [ "$actual" = "$expected" ] || {
+              echo "::error::Post-verify final tag $reference does not resolve to $expected." >&2
+              return 1
+            }
+          }
+          require_digest "$API_DIGEST"
+          require_digest "$WEB_DIGEST"
+          reconcile_tag ghcr.io/luoshuai990529/sag-api "$CANDIDATE_VERSION" "$API_DIGEST"
+          reconcile_tag ghcr.io/luoshuai990529/sag-api "$COMMIT_TAG" "$API_DIGEST"
+          reconcile_tag ghcr.io/luoshuai990529/sag-web "$CANDIDATE_VERSION" "$WEB_DIGEST"
+          reconcile_tag ghcr.io/luoshuai990529/sag-web "$COMMIT_TAG" "$WEB_DIGEST"
+          echo "Post-verify all final tags"
+          post_verify_tag "ghcr.io/luoshuai990529/sag-api:$CANDIDATE_VERSION" "$API_DIGEST"
+          post_verify_tag "ghcr.io/luoshuai990529/sag-api:$COMMIT_TAG" "$API_DIGEST"
+          post_verify_tag "ghcr.io/luoshuai990529/sag-web:$CANDIDATE_VERSION" "$WEB_DIGEST"
+          post_verify_tag "ghcr.io/luoshuai990529/sag-web:$COMMIT_TAG" "$WEB_DIGEST"

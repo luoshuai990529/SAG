@@ -119,13 +119,17 @@ GHCR。
 的 `staging-fnos-<run>-<attempt>-<sha>` 标签。它检查 staging 原始 index、拉取
 amd64 staging 镜像并验证 OCI revision/version 元数据，最后以服务器端
 `imagetools create` 把已验证的 index digest 提升为候选版本和 `sha-<commit>`
-标签。候选和 commit 标签在开始时必须不存在，因此不会被重写。候选包仍只声明
-x86；arm64 镜像构建成功不等于 ARM64 fnOS 已认证。
+标签。已验证 digest 会作为 job output 和 artifact 保存；promotion 不再读取可变
+staging tag，而是对四个最终引用逐个对账：缺失则创建，已指向同一 digest 则接受，
+不同 digest 则失败，并在结束后再次确认全部引用。候选包仍只声明 x86；arm64
+镜像构建成功不等于 ARM64 fnOS 已认证。
 
-预提升失败可以重新运行：新的 run attempt 使用新的 staging 标签，最终标签仍未
-写入。staging 标签不会由工作流按 digest 删除，因为删除 digest 可能误删已提升
-的不可变内容；仅可使用能够精确删除单个 tag 的受控 GHCR 操作清理，并保留审计
-记录。
+预提升失败可以重新运行：新的 run attempt 使用新的 staging 标签；部分 promotion
+重试时会补齐缺失且同一 release digest 的最终标签，但绝不改写不同 digest。流程
+会尽量缩小并发窗口，仍不能声明 GHCR 已在 registry 层强制 tag 不可变，因此 fnOS
+包必须继续固定 digest。staging 标签不会由工作流按 digest 删除，因为删除 digest
+可能误删已提升内容；仅可使用能够精确删除单个 tag 的受控 GHCR 操作清理，并保留
+审计记录。
 
 可复用 CI 会运行发布 Compose、包行为、生命周期和文档测试，但不会下载未经
 校验的 Linux `fnpack` 可执行文件。`fnpack build` 结构测试只在预先验证了官方
