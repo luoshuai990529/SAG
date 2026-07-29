@@ -35,7 +35,8 @@ async function lifecycleFixture(t, overrides = {}) {
   await writeFile(tempLog, "");
 
   await writeCommand(binDir, "docker", `
-printf 'docker %s\\n' "$*" >> "$FAKE_COMMAND_LOG"
+all_docker_args="$*"
+printf 'docker %s\\n' "$all_docker_args" >> "$FAKE_COMMAND_LOG"
 if [ "\${1:-}" = inspect ]; then
   case "\${3:-}" in
     *State.Status*)
@@ -71,19 +72,41 @@ if [ "\${1:-}" = inspect ]; then
     *) exit 2 ;;
   esac
 fi
-if [ "\${1:-}" = compose ] && [ "\${4:-}" = stop ]; then
-  exit "\${FAKE_DOCKER_STOP_EXIT:-0}"
-fi
-if [ "\${1:-}" = compose ] && [ "\${4:-}" = ps ]; then
-  if [ "\${5:-}" = -aq ]; then
+if [ "\${1:-}" = compose ]; then
+  shift
+  compose_project=''
+  compose_file=''
+  compose_action=''
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project-name) compose_project="\${2:-}"; shift 2 ;;
+      -f) compose_file="\${2:-}"; shift 2 ;;
+      --profile) shift 2 ;;
+      *) compose_action="$1"; shift; break ;;
+    esac
+  done
+  if [ "\${FAKE_REQUIRE_SAG_PROJECT:-0}" -eq 1 ]; then
+    [ "$compose_project" = sag ] || exit 86
+    [ "$compose_file" = "$FAKE_EXPECTED_COMPOSE_FILE" ] || exit 87
+  fi
+  if [ "$compose_action" = stop ]; then
+    exit "\${FAKE_DOCKER_STOP_EXIT:-0}"
+  fi
+  if [ "$compose_action" = ps ] && [ "\${1:-}" = -aq ]; then
     [ "\${FAKE_AUTH_PS_EXIT:-0}" -eq 0 ] || exit "$FAKE_AUTH_PS_EXIT"
     printf '%s\\n' "\${FAKE_AUTH_CONTAINER_IDS-auth-container-id}"
     exit 0
   fi
-  printf '%s\\n' "\${FAKE_COMPOSE_RUNNING_IDS-container-id}"
-  exit "\${FAKE_DOCKER_PS_EXIT:-0}"
+  if [ "$compose_action" = ps ] && [ "\${1:-}" = -q ] && [ "\${2:-}" = gateway ]; then
+    printf '%s\\n' sag-gateway
+    exit "\${FAKE_DOCKER_PS_EXIT:-0}"
+  fi
+  if [ "$compose_action" = ps ]; then
+    printf '%s\\n' "\${FAKE_COMPOSE_RUNNING_IDS-container-id}"
+    exit "\${FAKE_DOCKER_PS_EXIT:-0}"
+  fi
 fi
-case "$*" in
+case "$all_docker_args" in
   *SAG_LIFECYCLE_ACTION=size*)
     printf '%s\\n' "\${FAKE_DATA_KIB_OUTPUT-100}"
     exit "\${FAKE_DATA_KIB_EXIT:-0}"
@@ -178,10 +201,13 @@ done
       TRIM_APPDEST: appDest,
       TRIM_SERVICE_PORT: "3080",
       TRIM_TEMP_LOGFILE: tempLog,
+      COMPOSE_PROJECT_NAME: "hostile-project",
       FAKE_COMMAND_LOG: commandLog,
       FAKE_AUTH_INSPECT_COUNT_FILE: path.join(root, "auth-inspect-count"),
       FAKE_BACKUP_DIR: path.join(pkgVar, "backup"),
       FAKE_DATA_DIR: path.join(pkgVar, "data"),
+      FAKE_EXPECTED_COMPOSE_FILE: path.join(appDest, "docker/docker-compose.yaml"),
+      FAKE_REQUIRE_SAG_PROJECT: "1",
       ...overrides,
     },
   };
@@ -421,6 +447,8 @@ test("container lifecycle helper durably syncs the auth env file then its direct
 
 test("local auth reset inspects every project container twice and rotates only the bootstrap secret", async (t) => {
   const fixture = await lifecycleFixture(t, {
+    COMPOSE_PROJECT_NAME: "hostile-project",
+    FAKE_REQUIRE_SAG_PROJECT: "1",
     FAKE_COMPOSE_RUNNING_IDS: "",
     FAKE_AUTH_CONTAINER_IDS: "auth-one\nauth-two",
     FAKE_AUTH_INSPECT_SEQUENCE: "exited,created,exited,created",
@@ -446,7 +474,9 @@ test("local auth reset inspects every project container twice and rotates only t
   assert.equal((await stat(envFile)).mode & 0o777, 0o600);
   assert.match(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
   const commands = await readFile(fixture.commandLog, "utf8");
-  assert.equal((commands.match(/docker compose .* ps -aq/g) || []).length, 2);
+  assert.equal((commands.match(/docker compose --project-name sag -f .* ps -aq/g) || []).length, 2);
+  assert.equal((commands.match(/docker compose --project-name sag -f .* --profile lifecycle run/g) || []).length, 2);
+  assert.doesNotMatch(commands, /hostile-project/);
   assert.equal((commands.match(/docker inspect .* auth-one/g) || []).length, 2);
   assert.equal((commands.match(/docker inspect .* auth-two/g) || []).length, 2);
   assert.ok(
@@ -857,9 +887,18 @@ test("install logs a user-visible error when temporary secret protection fails",
 });
 
 test("status is running only when gateway state and health plus API readiness pass", async (t) => {
-  const fixture = await lifecycleFixture(t);
+  const fixture = await lifecycleFixture(t, {
+    COMPOSE_PROJECT_NAME: "hostile-project",
+    FAKE_REQUIRE_SAG_PROJECT: "1",
+  });
   const healthy = runScript("main", fixture.env, ["status"]);
   assert.equal(healthy.status, 0, healthy.stderr);
+  const healthyCommands = await readFile(fixture.commandLog, "utf8");
+  assert.match(
+    healthyCommands,
+    /docker compose --project-name sag -f .*docker-compose\.yaml ps -q gateway/,
+  );
+  assert.doesNotMatch(healthyCommands, /hostile-project/);
 
   for (const scenario of [
     { env: { FAKE_GATEWAY_STATE: "exited" }, message: /gateway is not running/i },
@@ -1007,7 +1046,10 @@ test("upgrade delegates root-like private data backup to the pinned lifecycle he
 });
 
 test("upgrade cold-backs up the complete data tree with a temp archive and atomic rename", async (t) => {
-  const fixture = await lifecycleFixture(t);
+  const fixture = await lifecycleFixture(t, {
+    COMPOSE_PROJECT_NAME: "hostile-project",
+    FAKE_REQUIRE_SAG_PROJECT: "1",
+  });
   await mkdir(path.join(fixture.pkgVar, "backup"), { recursive: true });
   await mkdir(path.join(fixture.pkgVar, "data/uploads/nested"), { recursive: true });
   await writeFile(path.join(fixture.pkgVar, "data/sag.db"), "database");
@@ -1026,10 +1068,12 @@ test("upgrade cold-backs up the complete data tree with a temp archive and atomi
   assert.equal((await stat(path.join(fixture.pkgVar, "backup"))).mode & 0o777, 0o700);
   assert.equal((await stat(path.join(fixture.pkgVar, "backup", backupFiles[0]))).mode & 0o777, 0o600);
   const commands = await readFile(fixture.commandLog, "utf8");
-  assert.match(commands, /docker compose -f .*docker-compose\.yaml stop/);
+  assert.match(commands, /docker compose --project-name sag -f .*docker-compose\.yaml stop/);
   assert.match(commands, /SAG_LIFECYCLE_ACTION=backup/);
+  assert.equal((commands.match(/docker compose --project-name sag -f /g) || []).length, 4);
+  assert.doesNotMatch(commands, /hostile-project/);
   assert.doesNotMatch(commands, /^tar /m);
-  assert.doesNotMatch(commands, /docker compose -f .*docker-compose\.yaml start/);
+  assert.doesNotMatch(commands, /docker compose --project-name sag -f .*docker-compose\.yaml start/);
   assert.ok(commands.indexOf(" stop") < commands.indexOf("SAG_LIFECYCLE_ACTION=backup"));
 });
 
@@ -1100,7 +1144,10 @@ test("a partially failing Compose stop still triggers best-effort service recove
 });
 
 test("uninstall retains data by default and deletes it only after explicit selection", async (t) => {
-  const fixture = await lifecycleFixture(t);
+  const fixture = await lifecycleFixture(t, {
+    COMPOSE_PROJECT_NAME: "hostile-project",
+    FAKE_REQUIRE_SAG_PROJECT: "1",
+  });
   const dataFile = path.join(fixture.pkgVar, "data/keep.txt");
   await mkdir(path.dirname(dataFile), { recursive: true });
   await writeFile(dataFile, "retain me\n");
@@ -1112,7 +1159,12 @@ test("uninstall retains data by default and deletes it only after explicit selec
   const deleted = runScript("uninstall_callback", { ...fixture.env, SAG_DELETE_DATA: "true" });
   assert.equal(deleted.status, 0, deleted.stderr);
   await assert.rejects(stat(path.join(fixture.pkgVar, "data")), { code: "ENOENT" });
-  assert.match(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=delete/);
+  const commands = await readFile(fixture.commandLog, "utf8");
+  assert.match(
+    commands,
+    /docker compose --project-name sag -f .* --profile lifecycle run .*SAG_LIFECYCLE_ACTION=delete/,
+  );
+  assert.doesNotMatch(commands, /hostile-project/);
 });
 
 test("explicit uninstall accepts a trailing slash in TRIM_PKGVAR", async (t) => {

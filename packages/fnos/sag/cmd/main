@@ -4,13 +4,28 @@ log_status_error() {
     printf '%s\n' "$1" >> "${TRIM_TEMP_LOGFILE}"
 }
 
+compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
+
+compose_sag() {
+    docker compose --project-name sag -f "${compose_file}" "$@"
+}
+
 case "${1:-}" in
 start|stop)
     # The fnOS docker-project resource owns Compose start and stop.
     exit 0
     ;;
 status)
-    gateway_state="$(docker inspect --format '{{.State.Status}}' sag-gateway 2>> "${TRIM_TEMP_LOGFILE}")" || {
+    gateway_id="$(compose_sag ps -q gateway 2>> "${TRIM_TEMP_LOGFILE}")" || {
+        log_status_error "SAG gateway is not running."
+        exit 3
+    }
+    if [ -z "${gateway_id}" ]; then
+        log_status_error "SAG gateway is not running."
+        exit 3
+    fi
+
+    gateway_state="$(docker inspect --format '{{.State.Status}}' "${gateway_id}" 2>> "${TRIM_TEMP_LOGFILE}")" || {
         log_status_error "SAG gateway is not running."
         exit 3
     }
@@ -19,7 +34,7 @@ status)
         exit 3
     fi
 
-    gateway_health="$(docker inspect --format '{{.State.Health.Status}}' sag-gateway 2>> "${TRIM_TEMP_LOGFILE}")" || {
+    gateway_health="$(docker inspect --format '{{.State.Health.Status}}' "${gateway_id}" 2>> "${TRIM_TEMP_LOGFILE}")" || {
         log_status_error "SAG gateway is not healthy."
         exit 3
     }

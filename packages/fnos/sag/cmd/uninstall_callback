@@ -10,6 +10,9 @@ true)
     done
     data_dir="${pkgvar_dir}/data"
     compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
+    compose_sag() {
+        docker compose --project-name sag -f "${compose_file}" "$@"
+    }
     if [ -L "${data_dir}" ] || [ -e "${data_dir}" ]; then
         canonical_dir() {
             (cd -P -- "$1" 2>/dev/null && pwd -P)
@@ -44,7 +47,7 @@ true)
             printf '%s\n' "SAG uninstall could not protect its private mount parents." >> "${TRIM_TEMP_LOGFILE}"
             exit 1
         }
-        if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
+        if ! compose_sag --profile lifecycle run --rm --no-deps -T \
             -e SAG_LIFECYCLE_ACTION=delete lifecycle-delete /opt/sag-lifecycle.py \
             >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
             printf '%s\n' "SAG uninstall could not delete the selected active data." >> "${TRIM_TEMP_LOGFILE}"

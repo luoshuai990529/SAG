@@ -69,6 +69,10 @@ data_dir="${pkgvar_dir}/data"
 secret_file="${pkgetc_dir}/sag.env"
 compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
 
+compose_sag() {
+    docker compose --project-name sag -f "${compose_file}" "$@"
+}
+
 validate_owned_canonical_dir "${pkgvar_dir}" "package variable directory" || exit 1
 validate_owned_canonical_dir "${pkgetc_dir}" "package configuration directory" || exit 1
 validate_owned_canonical_dir "${data_dir}" "active data directory" || exit 1
@@ -109,7 +113,7 @@ if ! valid_hex_secret "${session_secret}" ||
 fi
 
 require_project_stopped() {
-    container_ids="$(docker compose -f "${compose_file}" ps -aq 2>> "${TRIM_TEMP_LOGFILE}")" || {
+    container_ids="$(compose_sag ps -aq 2>> "${TRIM_TEMP_LOGFILE}")" || {
         log_error "SAG auth recovery could not enumerate every project container."
         return 1
     }
@@ -167,14 +171,14 @@ fi
 # The active path now contains only the new bootstrap. Durably sync both the
 # file and its rename before starting the database helper; the app stays stopped
 # throughout, and a retry publishes yet another token regardless of DB state.
-if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
+if ! compose_sag --profile lifecycle run --rm --no-deps -T \
     -e SAG_LIFECYCLE_ACTION=auth-fsync lifecycle-auth-fsync /opt/sag-lifecycle.py \
     >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
     log_error "SAG auth recovery could not durably sync the rotated credential; the database reset was not started. Keep the app stopped and retry."
     exit 1
 fi
 
-if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
+if ! compose_sag --profile lifecycle run --rm --no-deps -T \
     -e SAG_LIFECYCLE_ACTION=auth-reset lifecycle-auth-reset /opt/sag-lifecycle.py \
     >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
     log_error "SAG auth recovery database helper failed; its commit state is unknown. Keep the app stopped and rerun local reset before any startup."

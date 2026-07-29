@@ -10,6 +10,10 @@ umask 077
 
 compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
 
+compose_sag() {
+    docker compose --project-name sag -f "${compose_file}" "$@"
+}
+
 canonical_dir() {
     (cd -P -- "$1" 2>/dev/null && pwd -P)
 }
@@ -70,7 +74,7 @@ if ! chmod 700 "${data_dir}" "${backup_dir}"; then
     exit 1
 fi
 
-data_kib="$(docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
+data_kib="$(compose_sag --profile lifecycle run --rm --no-deps -T \
     -e SAG_LIFECYCLE_ACTION=size lifecycle-size /opt/sag-lifecycle.py 2>> "${TRIM_TEMP_LOGFILE}")" || {
     log_error "SAG upgrade could not measure the active data tree."
     exit 1
@@ -104,7 +108,7 @@ if [ "${available_kib}" -lt "${required_kib}" ]; then
     exit 1
 fi
 
-running_ids="$(docker compose -f "${compose_file}" ps --status running -q 2>> "${TRIM_TEMP_LOGFILE}")" || {
+running_ids="$(compose_sag ps --status running -q 2>> "${TRIM_TEMP_LOGFILE}")" || {
     log_error "SAG upgrade could not determine whether this hook must recover running services."
     exit 1
 }
@@ -121,20 +125,20 @@ cleanup() {
     status=$?
     rm -f -- "${archive_temp}"
     if [ "${hook_stopped_services}" -eq 1 ]; then
-        docker compose -f "${compose_file}" start >> "${TRIM_TEMP_LOGFILE}" 2>&1 || true
+        compose_sag start >> "${TRIM_TEMP_LOGFILE}" 2>&1 || true
     fi
     exit "${status}"
 }
 trap cleanup EXIT HUP INT TERM
 
-if ! docker compose -f "${compose_file}" stop >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
+if ! compose_sag stop >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
     log_error "SAG upgrade could not stop services for a cold backup."
     exit 1
 fi
 
 validate_owned_canonical_dir "${data_dir}" "data" || exit 1
 validate_owned_canonical_dir "${backup_dir}" "backup" || exit 1
-if ! docker compose -f "${compose_file}" --profile lifecycle run --rm --no-deps -T \
+if ! compose_sag --profile lifecycle run --rm --no-deps -T \
     -e SAG_LIFECYCLE_ACTION=backup -e "SAG_ARCHIVE_TEMP=/backup/${archive_temp##*/}" \
     lifecycle-backup /opt/sag-lifecycle.py >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
     log_error "SAG upgrade backup archive failed; active data was not changed."
