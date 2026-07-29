@@ -141,14 +141,8 @@ function hasNextStaticAssetTag(html) {
       continue;
     }
     if (html.startsWith("--!>", index)) return false;
-    if (html[index] !== "<" || html[index + 1] === "/") continue;
-    const remainder = html.slice(index + 1);
-    const lower = remainder.toLowerCase();
-    const name = lower.startsWith("script") ? "script" : lower.startsWith("link") ? "link" : null;
-    if (!name) continue;
-    const boundary = remainder[name.length];
-    if (!(boundary === ">" || boundary === "/" || whitespace(boundary))) continue;
-    let end = index + 1 + name.length;
+    if (html[index] !== "<") continue;
+    let end = index + 1;
     let quote = null;
     for (; end < html.length; end += 1) {
       const character = html[end];
@@ -161,8 +155,17 @@ function hasNextStaticAssetTag(html) {
       }
     }
     if (end >= html.length || quote) return false;
+    let cursor = index + 1;
+    const closing = html[cursor] === "/";
+    if (closing) cursor += 1;
+    const nameStart = cursor;
+    while (cursor < end && !whitespace(html[cursor]) && html[cursor] !== "/") cursor += 1;
+    const name = html.slice(nameStart, cursor).toLowerCase();
+    if (closing || (name !== "script" && name !== "link")) {
+      index = end;
+      continue;
+    }
     const attributes = [];
-    let cursor = index + 1 + name.length;
     while (cursor < end) {
       while (cursor < end && whitespace(html[cursor])) cursor += 1;
       if (cursor >= end) break;
@@ -202,8 +205,9 @@ function hasNextStaticAssetTag(html) {
     }
     const relevantName = name === "script" ? "src" : "href";
     const relevant = attributes.filter((attribute) => attribute.name === relevantName);
-    if (relevant.length > 1) continue;
-    if (relevant.length === 1 && relevant[0].quoted && relevant[0].value.startsWith("/_next/static/")) found = true;
+    if (relevant.length === 1 && relevant[0].quoted && relevant[0].value.startsWith("/_next/static/")) {
+      found = true;
+    }
     index = end;
   }
   return found;

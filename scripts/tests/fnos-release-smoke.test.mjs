@@ -234,6 +234,10 @@ for (const [name, loginResponse, message] of [
   ["unquoted src", { body: '<!doctype html><script src=/_next/static/x.js></script>' }, /Next.*HTML markers/i],
   ["unclosed relevant quote", { body: '<!doctype html><script src="/_next/static/x.js></script>' }, /Next.*HTML markers/i],
   ["unclosed tag", { body: '<!doctype html><script src="/_next/static/x.js"' }, /Next.*HTML markers/i],
+  ["fake script inside div attribute", { body: '<!doctype html><div data-x=\'<script src="/_next/static/fake.js"></script>\'></div>' }, /Next.*HTML markers/i],
+  ["fake script inside style attribute", { body: '<!doctype html><style data-x=\'<script src="/_next/static/fake.js"></script>\'></style>' }, /Next.*HTML markers/i],
+  ["fake link inside meta attribute", { body: '<!doctype html><meta content=\'<link href="/_next/static/fake.css">\'>' }, /Next.*HTML markers/i],
+  ["fake script inside custom attribute", { body: '<!doctype html><x-widget value=\'<script src="/_next/static/fake.js"></script>\'></x-widget>' }, /Next.*HTML markers/i],
   ["missing Content-Type", { headers: "HTTP/1.1 200 OK\r\n\r\n" }, /Content-Type.*text\/html/i],
   ["duplicate Content-Type", { headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Type: text/html\r\n\r\n" }, /Content-Type.*text\/html/i],
   ["curl exit", { exitCode: 7, stderr: "connection refused" }, /Web login request failed/i],
@@ -282,6 +286,17 @@ test("skips a complete top-level comment and accepts a later real Next tag", asy
   });
   assert.equal(invoke(tools).status, 0);
 });
+
+for (const [name, body] of [
+  ["unmatched comment bytes inside an attribute", '<!doctype html><div data-x="<!--"><script src="/_next/static/real.js"></script>'],
+  ["complete comment bytes inside an attribute", '<!doctype html><div data-x="<!--x-->"><script src="/_next/static/real.js"></script>'],
+  ["a normal outer tag before the marker", '<!doctype html><main class="shell"><script src="/_next/static/real.js"></script></main>'],
+]) {
+  test(`accepts ${name} before a real top-level Next marker`, async (t) => {
+    const tools = await fakeTools(t, { loginResponse: { body } });
+    assert.equal(invoke(tools).status, 0);
+  });
+}
 
 test("fails closed when an exact digest pull fails and still attempts cleanup", async (t) => {
   const tools = await fakeTools(t, { dockerFail: `pull --platform linux/amd64 ${apiImage}` });
