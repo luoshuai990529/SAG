@@ -10,8 +10,8 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 export const gatewayPolicyPath = path.join(repoRoot, "packages/fnos/gateway-policy.json");
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
 const revisionPattern = /^[a-f0-9]{40}$/;
-const datePattern = /^\d{4}-\d{2}-\d{2}$/;
-const maximumReviewAgeDays = 30;
+const rfc3339Pattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/;
+const maximumReviewAgeMilliseconds = 30 * 24 * 60 * 60 * 1000;
 const indexMediaTypes = new Set([
   "application/vnd.oci.image.index.v1+json",
   "application/vnd.docker.distribution.manifest.list.v2+json",
@@ -21,11 +21,60 @@ function invariant(condition, message) {
   if (!condition) throw new Error(`fnOS gateway policy: ${message}`);
 }
 
-function utcDay(value, label) {
-  invariant(typeof value === "string" && datePattern.test(value), `${label} must be an ISO date`);
-  const milliseconds = Date.parse(`${value}T00:00:00Z`);
-  invariant(Number.isFinite(milliseconds), `${label} must be a valid ISO date`);
-  return milliseconds;
+function isLeapYear(year) {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+export function parseRfc3339Timestamp(
+  value,
+  { label = "timestamp", utcOnly = false, maximumFractionDigits = 9 } = {},
+) {
+  const match = typeof value === "string" ? rfc3339Pattern.exec(value) : null;
+  if (!match) throw new Error(`${label} must be a strict RFC3339 timestamp`);
+  const [
+    , yearText, monthText, dayText, hourText, minuteText, secondText, fraction = "", zone,
+  ] = match;
+  if (utcOnly && zone !== "Z") throw new Error(`${label} must be a strict RFC3339 UTC timestamp ending in Z`);
+  if (fraction.length - 1 > maximumFractionDigits) {
+    throw new Error(`${label} exceeds supported millisecond precision`);
+  }
+
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const monthLengths = [
+    31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+  ];
+  if (
+    year < 1
+    || month < 1
+    || month > 12
+    || day < 1
+    || day > monthLengths[month - 1]
+    || hour > 23
+    || minute > 59
+    || second > 59
+  ) {
+    throw new Error(`${label} must be a valid round-trip RFC3339 timestamp`);
+  }
+
+  let offsetMinutes = 0;
+  if (zone !== "Z") {
+    const offsetHour = Number(zone.slice(1, 3));
+    const offsetMinute = Number(zone.slice(4, 6));
+    if (offsetHour > 23 || offsetMinute > 59) {
+      throw new Error(`${label} must have a valid RFC3339 timezone offset`);
+    }
+    offsetMinutes = (offsetHour * 60 + offsetMinute) * (zone[0] === "+" ? 1 : -1);
+  }
+  const milliseconds = Number((fraction.slice(1) + "000").slice(0, 3));
+  const instant = new Date(0);
+  instant.setUTCFullYear(year, month - 1, day);
+  instant.setUTCHours(hour, minute, second, milliseconds);
+  return instant.getTime() - offsetMinutes * 60_000;
 }
 
 export function validateGatewayPolicy(policy, now = new Date()) {
@@ -55,19 +104,35 @@ export function validateGatewayPolicy(policy, now = new Date()) {
   }
 
   invariant(review && typeof review === "object", "review metadata is required");
-  const reviewed = utcDay(review.reviewedOn, "reviewedOn");
-  const expires = utcDay(review.expiresOn, "expiresOn");
+  let reviewed;
+  let expires;
+  try {
+    reviewed = parseRfc3339Timestamp(review.reviewedAt, {
+      label: "reviewedAt",
+      utcOnly: true,
+      maximumFractionDigits: 3,
+    });
+    expires = parseRfc3339Timestamp(review.expiresAt, {
+      label: "expiresAt",
+      utcOnly: true,
+      maximumFractionDigits: 3,
+    });
+  } catch (error) {
+    invariant(false, error.message);
+  }
   invariant(
-    Number.isInteger(review.maximumAgeDays)
-      && review.maximumAgeDays > 0
-      && review.maximumAgeDays <= maximumReviewAgeDays,
-    `maximumAgeDays must be at most ${maximumReviewAgeDays} days`,
+    review.maximumAgeHours === 720,
+    "maximumAgeHours must be exactly 720",
   );
-  const ageDays = (expires - reviewed) / 86_400_000;
-  invariant(ageDays >= 0 && ageDays <= review.maximumAgeDays, "review window exceeds maximumAgeDays");
-  const today = Date.parse(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
-  invariant(today >= reviewed, "review date is in the future");
-  invariant(today <= expires, `review expired on ${review.expiresOn}`);
+  invariant(expires > reviewed, "expiresAt must be after reviewedAt");
+  invariant(
+    expires - reviewed <= maximumReviewAgeMilliseconds,
+    "review window must not exceed exactly 30 days (30*24h)",
+  );
+  const nowMilliseconds = now instanceof Date ? now.getTime() : Number.NaN;
+  invariant(Number.isFinite(nowMilliseconds), "current time must be a valid Date");
+  invariant(nowMilliseconds >= reviewed, "review timestamp is in the future");
+  invariant(nowMilliseconds < expires, `review expired at ${review.expiresAt}`);
   invariant(Array.isArray(review.sources) || review.sources === undefined, "review sources must be an array");
 
   invariant(vulnerabilityGate?.scanner === "aquasecurity/trivy", "scanner must be aquasecurity/trivy");
@@ -84,15 +149,16 @@ export function validateGatewayPolicy(policy, now = new Date()) {
   invariant(vulnerabilityGate.exitCodeOnFindings === 1, "scan must exit 1 on findings");
   invariant(vulnerabilityGate.result === "passed", "vulnerability scan result must be passed");
   invariant(vulnerabilityGate.fixableFindings === 0, "vulnerability scan must record zero fixable findings");
-  invariant(
-    typeof vulnerabilityGate.scannedAt === "string"
-      && Number.isFinite(Date.parse(vulnerabilityGate.scannedAt)),
-    "scannedAt must be a valid timestamp",
-  );
-  invariant(
-    vulnerabilityGate.scannedAt.slice(0, 10) === review.reviewedOn,
-    "scanner evidence and review must be renewed together",
-  );
+  let scanned;
+  try {
+    scanned = parseRfc3339Timestamp(vulnerabilityGate.scannedAt, {
+      label: "scannedAt",
+      utcOnly: true,
+    });
+  } catch (error) {
+    invariant(false, error.message);
+  }
+  invariant(scanned >= reviewed && scanned < expires, "scanner evidence must fall within the review window");
   invariant(
     digestPattern.test(`sha256:${vulnerabilityGate.linuxAmd64ArchiveSha256}`),
     "Linux scanner archive SHA-256 is required",

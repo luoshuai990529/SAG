@@ -122,7 +122,12 @@ ghcr.io/luoshuai990529/sag-web
 上游 revision。它下载官方 Trivy `0.70.0` Linux amd64 归档并核对 SHA-256
 `8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9`，对固定
 `linux/amd64` gateway 执行“可修复 Critical/High 必须为零”的扫描。原始报告和
-漏洞数据库不归档，只保留脱敏摘要；该 job 失败时 staging 不会发布。
+漏洞数据库不归档，只保留脱敏摘要。workflow 会原样记录 Trivy 退出状态；只有
+退出 `0` 且完整 OS package 结果存在时，才把 Trivy `0.70.0` 对零发现省略的
+`Vulnerabilities` 字段规范化为显式 `null`。缺失/损坏/不完整 JSON、扫描器非零退出、
+错误镜像或任何发现都会生成 `failed` 摘要并以非零状态结束；摘要在 `always()` 下
+上传。摘要中的 `sourceReportSha256` 始终哈希未经规范化的原始 Trivy JSON；canonical
+JSON 只用于严格结构校验。该 job 失败时 staging 不会发布。
 
 随后工作流只在 runner
 本地构建并加载 amd64 API/Web，实际轮询 API ready 与 Web 根路径；这一步不写
@@ -161,7 +166,14 @@ node scripts/fnos-gateway-policy.mjs verify --docker docker
 
 ### Nginx gateway 复核与续期
 
-本轮复核日期为 `2026-07-29`，到期日为 `2026-08-28`。固定引用为：
+本轮复核时间与到期时间使用 UTC 绝对时间，不按本地日历日取整：
+
+- `reviewedAt=2026-07-29T08:33:41Z`（Asia/Shanghai：
+  `2026-07-29T16:33:41+08:00`）；
+- `expiresAt=2026-08-28T08:33:41Z`（Asia/Shanghai：
+  `2026-08-28T16:33:41+08:00`，此时刻起即失效）。
+
+固定引用为：
 
 ```text
 docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46
@@ -190,7 +202,8 @@ GATEWAY_IMAGE="$(
   "$GATEWAY_IMAGE"
 ```
 
-`2026-07-29T16:33:41+08:00` 的实际结果为通过：Alpine `3.24.1`、image ID
+实际报告时间为 `2026-07-29T08:33:41.448549Z`（Asia/Shanghai：
+`2026-07-29T16:33:41.448549+08:00`），结果为通过：Alpine `3.24.1`、image ID
 `sha256:6e01bfae6f7971512a5765fe2f52ca4267a4773c7f8b357a2d39e5300787cece`，
 可修复 Critical/High 为 `0`。这个数字来自本轮真实报告，不是预设或豁免。
 
@@ -199,8 +212,10 @@ GATEWAY_IMAGE="$(
 核对 Docker Official Image 的 tag、index digest、amd64/arm64 子 manifest 和 OCI
 revision；用 checksum 固定的新 Trivy 版本扫描；若存在发现则停止候选发布；通过后
 在同一个受评审 commit 中更新 policy 的镜像、平台、scanner 证据、复核/到期日和本文。
-不得只延长日期或保留旧扫描结果。硬编码 30 天上限会让过期策略、过宽窗口和任意
-Docker Hub Nginx digest 在发布 Compose 校验、包构建及 workflow 中失败。
+不得只延长日期或保留旧扫描结果。策略严格要求 RFC3339 UTC `Z` 时间戳、到期时间
+晚于复核时间且最多相差 `30*24h`；只在当前绝对时间严格早于 `expiresAt` 时有效。
+因此本地时区午夜不会提前/延后门禁，而到期边界本身已经无效。任意过期/超宽策略和
+Docker Hub Nginx digest 都会在发布 Compose 校验、包构建及 workflow 中失败。
 
 ## 3. 构建正式 `.fpk`
 

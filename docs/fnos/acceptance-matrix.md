@@ -36,7 +36,7 @@
 | PKG-03 | Shell/JSON/Compose 静态检查 | 通过 | 10 个 Bash 脚本、4 个 JSON、源码与包模板 Compose config 均通过 | 命令摘要；截图不适用 |
 | PKG-04 | 临时结构包 `fnpack build` 和 SHA-256 | 通过 | API/Web 使用 `test.invalid` digest、gateway 使用受评审正式 digest，仅在临时目录构建；SHA-256 `3cd3fc69ff43a55ccdf256f4bb3473c6f27bd47c4bd258f80d96dc72a40213fc`；不可分发 | 命令摘要；截图不适用 |
 | PKG-05 | 正式 `sag-1.4.0-fnos.1.fpk` 和 SHA-256 | 阻塞 | API/Web 公共 manifest-list digest 尚未发布，构建脚本会拒绝不存在的引用 | `docs/fnos/evidence/2026-07-29/pkg-05/summary.md`（待生成） |
-| SEC-01 | 固定 Nginx gateway OCI metadata 与漏洞门禁 | 通过 | `1.30.4-alpine@sha256:97d490...`；amd64/arm64 子 manifest 与 revision `ccdab6c...` 匹配；Trivy 0.70.0 对 linux/amd64 的可修复 Critical/High 为 0；policy 复核 `2026-07-29`、到期 `2026-08-28` | `docs/fnos/evidence/2026-07-29/gateway-security/summary.md` |
+| SEC-01 | 固定 Nginx gateway OCI metadata 与漏洞门禁 | 通过 | `docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46`；amd64/arm64 子 manifest 的上游 revision 均为 `ccdab6c99ae2e2fc53a144dc68d6b8f44163adf2`；Trivy 0.70.0 对 linux/amd64 的可修复 Critical/High 为 0；`reviewedAt=2026-07-29T08:33:41Z`，`expiresAt=2026-08-28T08:33:41Z`（边界排除） | [SEC-01 证据](./evidence/2026-07-29/gateway-security/summary.md) |
 
 ## 网络和 fnOS 生命周期验收
 
@@ -69,6 +69,6 @@
 | REL-02 | x86-64 fnOS 实机 | 待执行：VM 结果不能替代实机认证 |
 | REL-03 | ARM64 fnOS 实机 | 不适用：本候选包声明 x86；正式声明 ARM64 支持前必须新增实机认证 |
 | REL-04 | 飞牛应用中心上架 | 待执行：发布材料、审核和平台反馈属于候选版之后的门禁 |
-| REL-05 | Nginx gateway 安全复核有效 | 通过至 2026-08-28：staging 依赖只读 gateway-security job；它复核官方 OCI index 并用 checksum 固定的 Trivy 0.70.0 阻断可修复 Critical/High。镜像、scanner/DB 或 policy 变化及到期时必须重新复核，不能只延长日期。 |
+| REL-05 | Nginx gateway 安全复核有效 | 当前有效，严格早于 `2026-08-28T08:33:41Z`（Asia/Shanghai `2026-08-28T16:33:41+08:00`）：staging 依赖只读 gateway-security job；它复核官方 OCI index，并用 checksum 固定的 Trivy 0.70.0 阻断非零退出、不完整证据及可修复 Critical/High。镜像、scanner/DB 或 policy 变化及到期时必须重新复核，不能只延长时间。 |
 
 只有 PKG-05、NET-02、FPK/BIZ/DATA/UPG/UN/PERF 设备用例以及 REL-02 完成后，才能把 `1.4.0-fnos.1` 标记为 x86 正式候选交付物。构建出临时结构包不等于设备验收。

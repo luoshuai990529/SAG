@@ -83,7 +83,10 @@ test("gateway scan gates publication with a checksum-pinned Trivy binary and exa
   assert.match(gateway, /--exit-code 1/);
   assert.match(gateway, /"\$GATEWAY_IMAGE"/);
   assert.match(gateway, /trivy_status="\$\?"/);
+  assert.match(gateway, /canonicalize-fnos-trivy-report\.mjs/);
   assert.match(gateway, /summarize-fnos-gateway-scan\.mjs/);
+  assert.match(gateway, /--source-report "\$raw_report"/);
+  assert.match(gateway, /--scanner-exit-code "\$trivy_status"/);
   assert.match(gateway, /test "\$trivy_status" -eq 0/);
   assert.match(gateway, /if: \$\{\{ always\(\) \}\}/);
   assert.match(staging, /needs: \[candidate, local-amd64-smoke, gateway-security\]/);

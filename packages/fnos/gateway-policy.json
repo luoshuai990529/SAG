@@ -21,9 +21,9 @@
     }
   ],
   "review": {
-    "reviewedOn": "2026-07-29",
-    "expiresOn": "2026-08-28",
-    "maximumAgeDays": 30,
+    "reviewedAt": "2026-07-29T08:33:41Z",
+    "expiresAt": "2026-08-28T08:33:41Z",
+    "maximumAgeHours": 720,
     "sources": [
       "https://nginx.org/2026.html",
       "https://nginx.org/en/security_advisories.html",
@@ -42,7 +42,7 @@
     ],
     "ignoreUnfixed": true,
     "exitCodeOnFindings": 1,
-    "scannedAt": "2026-07-29T16:33:41.448549+08:00",
+    "scannedAt": "2026-07-29T08:33:41.448549Z",
     "result": "passed",
     "fixableFindings": 0,
     "imageId": "sha256:6e01bfae6f7971512a5765fe2f52ca4267a4773c7f8b357a2d39e5300787cece",

@@ -35,9 +35,9 @@ function reviewedPolicy(overrides = {}) {
       },
     ],
     review: {
-      reviewedOn: "2026-07-29",
-      expiresOn: "2026-08-28",
-      maximumAgeDays: 30,
+      reviewedAt: "2026-07-29T08:33:41Z",
+      expiresAt: "2026-08-28T08:33:41Z",
+      maximumAgeHours: 720,
     },
     vulnerabilityGate: {
       scanner: "aquasecurity/trivy",
@@ -48,7 +48,7 @@ function reviewedPolicy(overrides = {}) {
       severities: ["CRITICAL", "HIGH"],
       ignoreUnfixed: true,
       exitCodeOnFindings: 1,
-      scannedAt: "2026-07-29T16:33:41+08:00",
+      scannedAt: "2026-07-29T08:33:41.448549Z",
       result: "passed",
       fixableFindings: 0,
       imageId: `sha256:${"6".repeat(64)}`,
@@ -86,7 +86,7 @@ function reviewedIndex({ amd64Revision = revision, amd64Digest = `sha256:${"8".r
 
 test("accepts a current reviewed gateway policy and its exact OCI index metadata", () => {
   const policy = reviewedPolicy();
-  assert.equal(validateGatewayPolicy(policy, new Date("2026-07-29T12:00:00Z")), reference);
+  assert.equal(validateGatewayPolicy(policy, new Date("2026-07-30T12:00:00Z")), reference);
   assert.doesNotThrow(() => validateGatewayIndex(policy, reviewedIndex()));
 });
 
@@ -107,7 +107,7 @@ test("rejects a gateway policy without recorded scanner approval", () => {
       result: "pending",
     },
   });
-  assert.throws(() => validateGatewayPolicy(policy, new Date("2026-07-29T12:00:00Z")), /scan.*passed/i);
+  assert.throws(() => validateGatewayPolicy(policy, new Date("2026-07-30T12:00:00Z")), /scan.*passed/i);
 });
 
 test("rejects scanner approval without exact artifact evidence", () => {
@@ -118,27 +118,77 @@ test("rejects scanner approval without exact artifact evidence", () => {
     },
   });
   assert.throws(
-    () => validateGatewayPolicy(policy, new Date("2026-07-29T12:00:00Z")),
+    () => validateGatewayPolicy(policy, new Date("2026-07-30T12:00:00Z")),
     /source report sha-256/i,
   );
 });
 
-test("rejects an expired gateway review", () => {
+test("accepts one millisecond before expiry and rejects the exact expiry instant", () => {
+  assert.equal(
+    validateGatewayPolicy(reviewedPolicy(), new Date("2026-08-28T08:33:40.999Z")),
+    reference,
+  );
   assert.throws(
-    () => validateGatewayPolicy(reviewedPolicy(), new Date("2026-08-29T00:00:00Z")),
+    () => validateGatewayPolicy(reviewedPolicy(), new Date("2026-08-28T08:33:41.000Z")),
     /expired/i,
   );
 });
 
-test("rejects a review window wider than the hard thirty-day bound", () => {
+test("accepts exactly thirty times twenty-four hours and rejects one millisecond more", () => {
+  assert.equal(
+    validateGatewayPolicy(reviewedPolicy(), new Date("2026-07-30T12:00:00Z")),
+    reference,
+  );
   const policy = reviewedPolicy({
     review: {
-      reviewedOn: "2026-07-29",
-      expiresOn: "2026-09-01",
-      maximumAgeDays: 34,
+      reviewedAt: "2026-07-29T08:33:41Z",
+      expiresAt: "2026-08-28T08:33:41.001Z",
+      maximumAgeHours: 720,
     },
   });
-  assert.throws(() => validateGatewayPolicy(policy, new Date("2026-07-29T12:00:00Z")), /30 days/i);
+  assert.throws(() => validateGatewayPolicy(policy, new Date("2026-07-30T12:00:00Z")), /30 days/i);
+});
+
+test("rejects impossible or non-UTC review timestamps", () => {
+  for (const review of [
+    {
+      reviewedAt: "2026-02-30T08:33:41Z",
+      expiresAt: "2026-03-30T08:33:41Z",
+      maximumAgeHours: 720,
+    },
+    {
+      reviewedAt: "2026-07-29T16:33:41+08:00",
+      expiresAt: "2026-08-28T16:33:41+08:00",
+      maximumAgeHours: 720,
+    },
+    {
+      reviewedAt: "2026-07-29T08:33:41.0001Z",
+      expiresAt: "2026-08-28T08:33:41.0001Z",
+      maximumAgeHours: 720,
+    },
+  ]) {
+    assert.throws(
+      () => validateGatewayPolicy(reviewedPolicy({ review }), new Date("2026-07-30T12:00:00Z")),
+      /RFC3339 UTC|valid|precision/i,
+    );
+  }
+});
+
+test("rejects a zero-length review window", () => {
+  const instant = "2026-07-29T08:33:41Z";
+  assert.throws(
+    () => validateGatewayPolicy(reviewedPolicy({
+      review: { reviewedAt: instant, expiresAt: instant, maximumAgeHours: 720 },
+    }), new Date("2026-07-29T08:33:41Z")),
+    /after reviewedAt/i,
+  );
+});
+
+test("uses absolute UTC instants rather than the Asia Shanghai calendar date", () => {
+  assert.equal(
+    validateGatewayPolicy(reviewedPolicy(), new Date("2026-08-28T00:00:00+08:00")),
+    reference,
+  );
 });
 
 test("rejects raw platform metadata whose manifest digest differs from the review", () => {

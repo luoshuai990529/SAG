@@ -64,7 +64,8 @@ docker pull \
 - fnOS DNS、时间和 HTTPS 出站正常；
 - digest 与发布记录完全一致；
 - `node scripts/fnos-gateway-policy.mjs verify --docker docker` 通过，且 policy
-  未超过 30 天复核窗口；
+  当前时间严格早于 `2026-08-28T08:33:41Z`
+  （Asia/Shanghai `2026-08-28T16:33:41+08:00`）；
 - manifest list 包含 `linux/amd64`；
 - 包内没有 `test.invalid`、占位符、`latest` 或 tag-only 引用。
 

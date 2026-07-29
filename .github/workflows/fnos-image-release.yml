@@ -92,7 +92,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          report="$RUNNER_TEMP/gateway-trivy-report.json"
+          raw_report="$RUNNER_TEMP/gateway-trivy-raw.json"
+          canonical_report="$RUNNER_TEMP/gateway-trivy-canonical.json"
           set +e
           "$TRIVY_BIN" image \
             --platform linux/amd64 \
@@ -101,16 +102,24 @@ jobs:
             --ignore-unfixed \
             --exit-code 1 \
             --format json \
-            --output "$report" \
+            --output "$raw_report" \
             "$GATEWAY_IMAGE"
           trivy_status="$?"
           set -e
+          canonical_status=0
+          node scripts/canonicalize-fnos-trivy-report.mjs \
+            --input "$raw_report" \
+            --output "$canonical_report" \
+            --scanner-exit-code "$trivy_status" || canonical_status="$?"
           summary_status=0
           node scripts/summarize-fnos-gateway-scan.mjs \
-            --report "$report" \
+            --report "$canonical_report" \
+            --source-report "$raw_report" \
             --output gateway-scan-summary.json \
-            --scanner-version "$TRIVY_VERSION" || summary_status="$?"
+            --scanner-version "$TRIVY_VERSION" \
+            --scanner-exit-code "$trivy_status" || summary_status="$?"
           test "$trivy_status" -eq 0
+          test "$canonical_status" -eq 0
           test "$summary_status" -eq 0
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ always() }}
