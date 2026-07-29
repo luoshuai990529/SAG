@@ -131,26 +131,87 @@ function requireHttpEnvelope(response, operation) {
 }
 
 function hasNextStaticAssetTag(html) {
-  const uncommented = html.replace(/<!--[\s\S]*?-->/g, "");
-  if (uncommented.includes("<!--") || uncommented.includes("--!>")) return false;
-  const tags = uncommented.match(/<(?:script|link)(?=[\x20\r\n\t/>])[^<>]*>/gi) ?? [];
-  for (const tag of tags) {
-    const name = /^<(script|link)(?=[\x20\r\n\t/>])/i.exec(tag)?.[1]?.toLowerCase();
-    const attributes = new Map();
-    const source = tag.replace(/^<(?:script|link)(?=[\x20\r\n\t/>])/i, "").replace(/>$/, "");
-    const pattern = /(?:^|[\x20\r\n\t])([A-Za-z_:][A-Za-z0-9_.:-]*)[\x20\r\n\t]*=[\x20\r\n\t]*(["'])([^"'<>]*)\2/g;
-    for (const match of source.matchAll(pattern)) {
-      const key = match[1].toLowerCase();
-      const values = attributes.get(key) ?? [];
-      values.push(match[3]);
-      attributes.set(key, values);
+  let uncommented = "";
+  for (let index = 0; index < html.length;) {
+    if (html.startsWith("<!--", index)) {
+      const close = html.indexOf("-->", index + 4);
+      if (close < 0) return false;
+      index = close + 3;
+      continue;
     }
-    const relevant = name === "script" ? attributes.get("src") : name === "link" ? attributes.get("href") : undefined;
-    if (relevant?.length !== 1) continue;
-    const [value] = relevant;
-    if (value?.startsWith("/_next/static/")) return true;
+    if (html.startsWith("--!>", index)) return false;
+    uncommented += html[index];
+    index += 1;
   }
-  return false;
+  const whitespace = (character) => character === " " || character === "\t" || character === "\r" || character === "\n";
+  let found = false;
+  for (let index = 0; index < uncommented.length; index += 1) {
+    if (uncommented[index] !== "<" || uncommented[index + 1] === "/") continue;
+    const remainder = uncommented.slice(index + 1);
+    const lower = remainder.toLowerCase();
+    const name = lower.startsWith("script") ? "script" : lower.startsWith("link") ? "link" : null;
+    if (!name) continue;
+    const boundary = remainder[name.length];
+    if (!(boundary === ">" || boundary === "/" || whitespace(boundary))) continue;
+    let end = index + 1 + name.length;
+    let quote = null;
+    for (; end < uncommented.length; end += 1) {
+      const character = uncommented[end];
+      if (quote) {
+        if (character === quote) quote = null;
+      } else if (character === "'" || character === "\"") {
+        quote = character;
+      } else if (character === ">") {
+        break;
+      }
+    }
+    if (end >= uncommented.length || quote) return false;
+    const attributes = [];
+    let cursor = index + 1 + name.length;
+    while (cursor < end) {
+      while (cursor < end && whitespace(uncommented[cursor])) cursor += 1;
+      if (cursor >= end) break;
+      if (uncommented[cursor] === "/") {
+        cursor += 1;
+        while (cursor < end && whitespace(uncommented[cursor])) cursor += 1;
+        if (cursor !== end) return false;
+        break;
+      }
+      const start = cursor;
+      while (cursor < end && !whitespace(uncommented[cursor]) && !["=", "/", "'", "\"", "<"].includes(uncommented[cursor])) cursor += 1;
+      if (cursor === start) return false;
+      if (["'", "\"", "<"].includes(uncommented[cursor])) return false;
+      const attributeName = uncommented.slice(start, cursor).toLowerCase();
+      while (cursor < end && whitespace(uncommented[cursor])) cursor += 1;
+      let value = null;
+      let quoted = false;
+      if (uncommented[cursor] === "=") {
+        cursor += 1;
+        while (cursor < end && whitespace(uncommented[cursor])) cursor += 1;
+        if (uncommented[cursor] === "'" || uncommented[cursor] === "\"") {
+          quoted = true;
+          const valueQuote = uncommented[cursor++];
+          const valueStart = cursor;
+          while (cursor < end && uncommented[cursor] !== valueQuote) cursor += 1;
+          if (cursor >= end) return false;
+          value = uncommented.slice(valueStart, cursor++);
+        } else {
+          const valueStart = cursor;
+          while (cursor < end && !whitespace(uncommented[cursor]) && !["/", "'", "\"", "<", "="].includes(uncommented[cursor])) cursor += 1;
+          if (cursor === valueStart) return false;
+          value = uncommented.slice(valueStart, cursor);
+          if (cursor < end && !whitespace(uncommented[cursor]) && uncommented[cursor] !== "/") return false;
+        }
+      }
+      attributes.push({ name: attributeName, value, quoted });
+    }
+    const relevantName = name === "script" ? "src" : "href";
+    const relevant = attributes.filter((attribute) => attribute.name === relevantName);
+    if (relevant.length > 1) continue;
+    if (relevant.length === 1 && relevant[0].quoted && relevant[0].value.startsWith("/_next/static/")) found = true;
+    index = end;
+  }
+  return found;
 }
 
 async function requireApiReady(options, attempts = 30) {

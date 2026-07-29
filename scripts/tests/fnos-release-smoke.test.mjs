@@ -228,6 +228,10 @@ for (const [name, loginResponse, message] of [
   ["duplicate src nonnext then next", { body: '<!doctype html><script src="/other.js" src="/_next/static/x.js"></script>' }, /Next.*HTML markers/i],
   ["duplicate src next then nonnext", { body: '<!doctype html><script src="/_next/static/x.js" src="/other.js"></script>' }, /Next.*HTML markers/i],
   ["mixed-case duplicate href", { body: '<!doctype html><link HREF="/other.css" href="/_next/static/x.css">' }, /Next.*HTML markers/i],
+  ["boolean SRC plus real src", { body: '<!doctype html><script SRC src="/_next/static/x.js"></script>' }, /Next.*HTML markers/i],
+  ["unquoted src", { body: '<!doctype html><script src=/_next/static/x.js></script>' }, /Next.*HTML markers/i],
+  ["unclosed relevant quote", { body: '<!doctype html><script src="/_next/static/x.js></script>' }, /Next.*HTML markers/i],
+  ["unclosed tag", { body: '<!doctype html><script src="/_next/static/x.js"' }, /Next.*HTML markers/i],
   ["missing Content-Type", { headers: "HTTP/1.1 200 OK\r\n\r\n" }, /Content-Type.*text\/html/i],
   ["duplicate Content-Type", { headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Type: text/html\r\n\r\n" }, /Content-Type.*text\/html/i],
   ["curl exit", { exitCode: 7, stderr: "connection refused" }, /Web login request failed/i],
@@ -245,6 +249,24 @@ test("accepts a real quoted Next script marker with CRLF headers", async (t) => 
     loginResponse: {
       headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n",
       body: '<!doctype html><html><body><script defer src="/_next/static/chunks/app.js"></script></body></html>',
+    },
+  });
+  assert.equal(invoke(tools).status, 0);
+});
+
+test("accepts quoted greater-than text in an unrelated attribute", async (t) => {
+  const tools = await fakeTools(t, {
+    loginResponse: {
+      body: '<!doctype html><script data-note="a > b" src="/_next/static/chunks/app.js"></script>',
+    },
+  });
+  assert.equal(invoke(tools).status, 0);
+});
+
+test("ignores attribute-looking text inside another quoted value", async (t) => {
+  const tools = await fakeTools(t, {
+    loginResponse: {
+      body: '<!doctype html><script data-x=\'src="/other.js"\' src="/_next/static/chunks/app.js"></script>',
     },
   });
   assert.equal(invoke(tools).status, 0);
