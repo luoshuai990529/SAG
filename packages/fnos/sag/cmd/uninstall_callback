@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set -u
+
+case "${SAG_DELETE_DATA:-false}" in
+true)
+    rm -rf -- "${TRIM_PKGVAR}/data" || {
+        printf '%s\n' "SAG uninstall could not delete the selected active data." >> "${TRIM_TEMP_LOGFILE}"
+        exit 1
+    }
+    ;;
+*)
+    # Retain is the safe default. See RETAINED_DATA.md for the device-verification fallback.
+    ;;
+esac
+
+exit 0

@@ -1,0 +1,78 @@
+#!/bin/bash
+
+set -u
+
+log_error() {
+    printf '%s\n' "$1" >> "${TRIM_TEMP_LOGFILE}"
+}
+
+data_dir="${TRIM_PKGVAR}/data"
+backup_dir="${TRIM_PKGVAR}/backup"
+compose_file="${TRIM_APPDEST}/docker/docker-compose.yaml"
+
+if ! mkdir -p "${data_dir}" "${backup_dir}"; then
+    log_error "SAG upgrade could not prepare its backup directories."
+    exit 1
+fi
+
+data_kib="$(du -sk "${data_dir}" 2>> "${TRIM_TEMP_LOGFILE}" | awk 'NR == 1 {print $1}')" || {
+    log_error "SAG upgrade could not measure the active data tree."
+    exit 1
+}
+available_kib="$(df -Pk "${backup_dir}" 2>> "${TRIM_TEMP_LOGFILE}" | awk 'NR == 2 {print $4}')" || {
+    log_error "SAG upgrade could not measure free backup space."
+    exit 1
+}
+
+case "${data_kib}:${available_kib}" in
+    *[!0-9:]*|:*)
+        log_error "SAG upgrade received invalid disk-space measurements."
+        exit 1
+        ;;
+esac
+
+# Reserve 10 percent plus 1 MiB for archive metadata and compression variance.
+required_kib=$((data_kib + (data_kib / 10) + 1024))
+if [ "${available_kib}" -lt "${required_kib}" ]; then
+    log_error "SAG upgrade aborted: insufficient free space for a full-data backup."
+    exit 1
+fi
+
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)" || timestamp="unknown-time"
+archive="${backup_dir}/sag-data-${timestamp}-$$.tar.gz"
+archive_temp="${archive}.tmp"
+services_stopped=0
+
+cleanup() {
+    status=$?
+    rm -f -- "${archive_temp}"
+    if [ "${services_stopped}" -eq 1 ]; then
+        docker compose -f "${compose_file}" start >> "${TRIM_TEMP_LOGFILE}" 2>&1 || true
+    fi
+    exit "${status}"
+}
+trap cleanup EXIT HUP INT TERM
+
+if ! docker compose -f "${compose_file}" stop >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
+    log_error "SAG upgrade could not stop services for a cold backup."
+    exit 1
+fi
+services_stopped=1
+
+if ! tar -C "${TRIM_PKGVAR}" -czf "${archive_temp}" data >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
+    log_error "SAG upgrade backup archive failed; active data was not changed."
+    exit 1
+fi
+
+if ! mv -- "${archive_temp}" "${archive}"; then
+    log_error "SAG upgrade could not atomically publish the backup archive."
+    exit 1
+fi
+
+if ! docker compose -f "${compose_file}" start >> "${TRIM_TEMP_LOGFILE}" 2>&1; then
+    log_error "SAG backup completed, but services could not be restarted."
+    exit 1
+fi
+services_stopped=0
+trap - EXIT HUP INT TERM
+exit 0

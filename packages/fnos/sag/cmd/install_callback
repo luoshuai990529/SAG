@@ -1,0 +1,55 @@
+#!/bin/bash
+
+set -eu
+
+log_error() {
+    printf '%s\n' "$1" >> "${TRIM_TEMP_LOGFILE}"
+}
+
+if ! mkdir -p "${TRIM_PKGETC}" "${TRIM_PKGVAR}/data" "${TRIM_PKGVAR}/backup"; then
+    log_error "SAG installation could not create its private directories."
+    exit 1
+fi
+
+secret_file="${TRIM_PKGETC}/sag.env"
+umask 077
+
+if [ ! -e "${secret_file}" ]; then
+    secret="$(openssl rand -hex 32)" || {
+        log_error "SAG installation could not generate its secret key."
+        exit 1
+    }
+    case "${secret}" in
+        *[!0-9a-f]*|'')
+            log_error "SAG installation generated an invalid secret key."
+            exit 1
+            ;;
+    esac
+    if [ "${#secret}" -ne 64 ]; then
+        log_error "SAG installation generated an invalid secret key."
+        exit 1
+    fi
+
+    secret_temp="${secret_file}.tmp.$$"
+    trap 'rm -f -- "${secret_temp}"' EXIT HUP INT TERM
+    printf 'SAG_SECRET_KEY=%s\n' "${secret}" > "${secret_temp}"
+    chmod 600 "${secret_temp}"
+    if ! ln "${secret_temp}" "${secret_file}" 2>/dev/null && [ ! -e "${secret_file}" ]; then
+        log_error "SAG installation could not persist its secret key."
+        exit 1
+    fi
+    rm -f -- "${secret_temp}"
+    trap - EXIT HUP INT TERM
+fi
+
+if [ ! -f "${secret_file}" ]; then
+    log_error "SAG requires ${secret_file} to be a regular file."
+    exit 1
+fi
+
+chmod 600 "${secret_file}" || {
+    log_error "SAG installation could not protect its secret key."
+    exit 1
+}
+
+exit 0
