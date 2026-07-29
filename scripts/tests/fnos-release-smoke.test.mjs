@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -13,7 +13,13 @@ const webDigest = `sha256:${"b".repeat(64)}`;
 const apiImage = `ghcr.io/luoshuai990529/sag-api@${apiDigest}`;
 const webImage = `ghcr.io/luoshuai990529/sag-web@${webDigest}`;
 
-async function fakeTools(t, { nameOnlyStatus = "401", dockerFail = "" } = {}) {
+async function fakeTools(t, {
+  nameOnlyStatus = "401",
+  dockerFail = "",
+  readiness = {},
+  rootResponse = {},
+  loginResponse = {},
+} = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-digest-smoke-"));
   t.after(async () => rm(root, { recursive: true, force: true }));
   const docker = path.join(root, "docker");
@@ -39,6 +45,17 @@ const dataIndex = args.indexOf("--data");
 if (dataIndex >= 0) {
   const body = JSON.parse(args[dataIndex + 1]);
   process.stdout.write(body.password ? "200" : process.env.FAKE_NAME_ONLY_STATUS);
+} else {
+  const responses = JSON.parse(process.env.FAKE_HTTP_RESPONSES);
+  const url = args.at(-1);
+  const response = url.endsWith("/api/v1/system/ready")
+    ? responses.readiness
+    : url.endsWith("/login") ? responses.login : responses.root;
+  const outputIndex = args.indexOf("--output");
+  const headerIndex = args.indexOf("--dump-header");
+  if (outputIndex >= 0) fs.writeFileSync(args[outputIndex + 1], response.body);
+  if (headerIndex >= 0) fs.writeFileSync(args[headerIndex + 1], response.headers);
+  process.stdout.write(String(response.status));
 }
 process.exit(0);
 `);
@@ -54,7 +71,29 @@ process.exit(0);
       FAKE_CURL_LOG: curlLog,
       FAKE_NAME_ONLY_STATUS: nameOnlyStatus,
       FAKE_DOCKER_FAIL: dockerFail,
+      FAKE_HTTP_RESPONSES: JSON.stringify({
+        readiness: {
+          status: 200,
+          headers: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n",
+          body: JSON.stringify({ status: "ready", db: true }),
+          ...readiness,
+        },
+        root: {
+          status: 307,
+          headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login\r\n\r\n",
+          body: "",
+          ...rootResponse,
+        },
+        login: {
+          status: 200,
+          headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n",
+          body: '<!DOCTYPE html><html><head><link href="/_next/static/css/app.css"></head><body>SAG</body></html>',
+          ...loginResponse,
+        },
+      }),
+      TMPDIR: root,
     },
+    root,
   };
 }
 
@@ -101,6 +140,9 @@ test("smokes only the captured API/Web digest references with ephemeral password
   assert.ok(curlCalls.some((args) => args.at(-1).endsWith("/api/v1/system/ready")));
   assert.ok(curlCalls.some((args) => args.at(-1).endsWith("/")));
   assert.ok(curlCalls.some((args) => args.at(-1).endsWith("/login")));
+  assert.ok(curlCalls.filter((args) => !args.includes("--data")).every(
+    (args) => args.includes("--dump-header") && !args.includes("--location"),
+  ));
   const loginBodies = curlCalls.filter((args) => args.includes("--data")).map((args) => JSON.parse(args[args.indexOf("--data") + 1]));
   assert.deepEqual(loginBodies.map((body) => Object.keys(body).sort()), [
     ["name"],
@@ -109,7 +151,52 @@ test("smokes only the captured API/Web digest references with ephemeral password
   ]);
   assert.ok(dockerCalls.some((args) => args[0] === "rm" && args.includes("sag-fnos-api-test-123") && args.includes("sag-fnos-web-test-123")));
   assert.ok(dockerCalls.some((args) => args[0] === "volume" && args[1] === "rm" && args.includes("sag-fnos-data-test-123")));
+  assert.equal((await readdir(tools.root)).filter((name) => name.startsWith("sag-fnos-http-")).length, 0);
 });
+
+for (const [name, readiness, message] of [
+  ["HTTP 204", { status: 204, headers: "HTTP/1.1 204 No Content\r\n\r\n", body: "" }, /readiness.*HTTP 200/i],
+  ["HTTP redirect", { status: 302, headers: "HTTP/1.1 302 Found\r\nLocation: /login\r\n\r\n", body: "" }, /readiness.*HTTP 200/i],
+  ["wrong status field", { body: JSON.stringify({ status: "starting", db: true }) }, /status.*ready/i],
+  ["malformed JSON", { body: "{not-json" }, /readiness.*JSON/i],
+  ["database false", { body: JSON.stringify({ status: "ready", db: false }) }, /db.*true/i],
+]) {
+  test(`rejects API readiness with ${name}`, async (t) => {
+    const tools = await fakeTools(t, { readiness });
+    const result = invoke(tools);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, message);
+    assert.equal((await readdir(tools.root)).filter((entry) => entry.startsWith("sag-fnos-http-")).length, 0);
+  });
+}
+
+for (const [name, rootResponse, message] of [
+  ["arbitrary 302", { status: 302, headers: "HTTP/1.1 302 Found\r\nLocation: /login\r\n\r\n" }, /Web root.*307 or 308/i],
+  ["redirect loop", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /\r\n\r\n" }, /Location.*\/login/i],
+  ["wrong location", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /chat\r\n\r\n" }, /Location.*\/login/i],
+  ["unexpected 200", { status: 200, headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n", body: "<!doctype html>" }, /Web root.*307 or 308/i],
+]) {
+  test(`rejects Web root ${name}`, async (t) => {
+    const tools = await fakeTools(t, { rootResponse });
+    const result = invoke(tools);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, message);
+  });
+}
+
+for (const [name, loginResponse, message] of [
+  ["redirect", { status: 307, headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login\r\n\r\n", body: "" }, /Web login.*HTTP 200/i],
+  ["wrong content type", { headers: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" }, /Content-Type.*text\/html/i],
+  ["arbitrary body", { body: "<html><body>OK</body></html>" }, /Next.*HTML markers/i],
+  ["empty body", { body: "" }, /Next.*HTML markers/i],
+]) {
+  test(`rejects Web login ${name}`, async (t) => {
+    const tools = await fakeTools(t, { loginResponse });
+    const result = invoke(tools);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, message);
+  });
+}
 
 test("fails closed when an exact digest pull fails and still attempts cleanup", async (t) => {
   const tools = await fakeTools(t, { dockerFail: `pull --platform linux/amd64 ${apiImage}` });

@@ -2,6 +2,9 @@
 
 import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -77,13 +80,101 @@ function curl(options, args, operation) {
   return requireSuccess(execute(required(options, "curl"), args), operation);
 }
 
-async function waitFor(options, url, operation, attempts = 30) {
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const result = execute(required(options, "curl"), ["--fail", "--silent", "--show-error", "--max-time", "5", url]);
-    if (result.status === 0) return;
-    if (attempt < attempts) await delay(2_000);
+function captureHttp(options, url) {
+  const captureRoot = mkdtempSync(path.join(os.tmpdir(), "sag-fnos-http-"));
+  const bodyPath = path.join(captureRoot, "body");
+  const headersPath = path.join(captureRoot, "headers");
+  try {
+    const result = execute(required(options, "curl"), [
+      "--silent", "--show-error", "--max-time", "5",
+      "--output", bodyPath,
+      "--dump-header", headersPath,
+      "--write-out", "%{http_code}",
+      url,
+    ]);
+    const readCapture = (file) => {
+      try {
+        return readFileSync(file, "utf8");
+      } catch (error) {
+        if (error.code === "ENOENT") return "";
+        throw error;
+      }
+    };
+    return {
+      curlStatus: result.status,
+      curlError: result.stderr.trim(),
+      status: result.stdout.trim(),
+      headers: readCapture(headersPath),
+      body: readCapture(bodyPath),
+    };
+  } finally {
+    rmSync(captureRoot, { recursive: true, force: true });
   }
-  fail(`${operation} failed after ${attempts} attempts`);
+}
+
+function headerValues(headers, name) {
+  const prefix = `${name.toLowerCase()}:`;
+  return headers
+    .split(/\r?\n/)
+    .filter((line) => line.toLowerCase().startsWith(prefix))
+    .map((line) => line.slice(line.indexOf(":") + 1).trim());
+}
+
+async function requireApiReady(options, attempts = 30) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const response = captureHttp(options, "http://127.0.0.1:18001/api/v1/system/ready");
+    if (response.curlStatus !== 0 || /^5\d\d$/.test(response.status)) {
+      if (attempt < attempts) {
+        await delay(2_000);
+        continue;
+      }
+      fail(`API readiness request failed after ${attempts} attempts: ${response.curlError || response.status}`);
+    }
+    if (response.status !== "200") fail(`API readiness must return exact HTTP 200, received ${response.status}`);
+    let payload;
+    try {
+      payload = JSON.parse(response.body);
+    } catch (error) {
+      fail(`API readiness must return valid JSON: ${error.message}`);
+    }
+    if (payload?.status !== "ready") fail("API readiness JSON status must equal ready");
+    if (payload.db !== true) fail("API readiness JSON db must equal true");
+    return;
+  }
+}
+
+function requireWebRoot(options) {
+  const url = "http://127.0.0.1:13001/";
+  const response = captureHttp(options, url);
+  if (response.curlStatus !== 0) fail(`Web root request failed: ${response.curlError}`);
+  if (!["307", "308"].includes(response.status)) {
+    fail(`Web root must return exact HTTP 307 or 308, received ${response.status}`);
+  }
+  const locations = headerValues(response.headers, "Location");
+  if (locations.length !== 1) fail("Web root must return exactly one Location header normalized to /login");
+  let location;
+  try {
+    location = new URL(locations[0], url);
+  } catch {
+    fail("Web root Location must normalize to /login");
+  }
+  if (location.origin !== new URL(url).origin || `${location.pathname}${location.search}${location.hash}` !== "/login") {
+    fail(`Web root Location must normalize to /login, received ${locations[0]}`);
+  }
+}
+
+function requireWebLogin(options) {
+  const response = captureHttp(options, "http://127.0.0.1:13001/login");
+  if (response.curlStatus !== 0) fail(`Web login request failed: ${response.curlError}`);
+  if (response.status !== "200") fail(`Web login must return exact HTTP 200, received ${response.status}`);
+  const contentTypes = headerValues(response.headers, "Content-Type");
+  if (contentTypes.length !== 1 || !/^text\/html(?:;|$)/i.test(contentTypes[0])) {
+    fail(`Web login Content-Type must be text/html, received ${contentTypes.join(", ") || "missing"}`);
+  }
+  const body = response.body.trim();
+  if (!/^<!doctype html>/i.test(body) || !body.includes("/_next/static/")) {
+    fail("Web login must contain stable Next HTML markers");
+  }
 }
 
 function loginStatus(options, body) {
@@ -129,14 +220,14 @@ async function smoke(options) {
       "--publish", "127.0.0.1:13001:3000",
       webImage,
     ], "exact Web digest start");
-    await waitFor(options, "http://127.0.0.1:18001/api/v1/system/ready", "API readiness");
+    await requireApiReady(options);
     if (loginStatus(options, { name: "Digest Smoke Owner" }) !== "401") fail("name-only login must return 401 in password mode");
     if (loginStatus(options, { name: "Digest Smoke Owner", password, bootstrap_token: bootstrapToken }) !== "200") {
       fail("bootstrap initialization login must return 200");
     }
     if (loginStatus(options, { name: "Digest Smoke Owner", password }) !== "200") fail("daily password login must return 200");
-    await waitFor(options, "http://127.0.0.1:13001/", "Web root");
-    await waitFor(options, "http://127.0.0.1:13001/login", "Web login route");
+    requireWebRoot(options);
+    requireWebLogin(options);
   } finally {
     cleanup(options);
   }
