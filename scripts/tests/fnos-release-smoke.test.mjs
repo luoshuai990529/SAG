@@ -217,6 +217,8 @@ for (const [name, loginResponse, message] of [
   ["marker in comment", { body: '<!doctype html><!-- <script src="/_next/static/x.js"></script> --><html><body>SAG</body></html>' }, /Next.*HTML markers/i],
   ["marker in unterminated comment", { body: '<!doctype html><!-- <script src="/_next/static/x.js"></script><html></html>' }, /Next.*HTML markers/i],
   ["marker in malformed comment close", { body: '<!doctype html><!-- <script src="/_next/static/x.js"></script> --!><html></html>' }, /Next.*HTML markers/i],
+  ["comment spliced into asset path", { body: '<!doctype html><script src="/_next/sta<!--x-->tic/x.js"></script>' }, /Next.*HTML markers/i],
+  ["comment spliced into tag name", { body: '<!doctype html><scr<!--x-->ipt src="/_next/static/x.js"></script>' }, /Next.*HTML markers/i],
   ["marker as text", { body: "<!doctype html><html><body>/_next/static/x.js</body></html>" }, /Next.*HTML markers/i],
   ["script-widget tag", { body: '<!doctype html><script-widget src="/_next/static/x.js"></script-widget>' }, /Next.*HTML markers/i],
   ["link-widget tag", { body: '<!doctype html><link-widget href="/_next/static/x.css">' }, /Next.*HTML markers/i],
@@ -267,6 +269,15 @@ test("ignores attribute-looking text inside another quoted value", async (t) => 
   const tools = await fakeTools(t, {
     loginResponse: {
       body: '<!doctype html><script data-x=\'src="/other.js"\' src="/_next/static/chunks/app.js"></script>',
+    },
+  });
+  assert.equal(invoke(tools).status, 0);
+});
+
+test("skips a complete top-level comment and accepts a later real Next tag", async (t) => {
+  const tools = await fakeTools(t, {
+    loginResponse: {
+      body: '<!doctype html><!-- <script src="/_next/static/fake.js"></script> --><script src="/_next/static/real.js"></script>',
     },
   });
   assert.equal(invoke(tools).status, 0);

@@ -131,23 +131,18 @@ function requireHttpEnvelope(response, operation) {
 }
 
 function hasNextStaticAssetTag(html) {
-  let uncommented = "";
-  for (let index = 0; index < html.length;) {
+  const whitespace = (character) => character === " " || character === "\t" || character === "\r" || character === "\n";
+  let found = false;
+  for (let index = 0; index < html.length; index += 1) {
     if (html.startsWith("<!--", index)) {
       const close = html.indexOf("-->", index + 4);
       if (close < 0) return false;
-      index = close + 3;
+      index = close + 2;
       continue;
     }
     if (html.startsWith("--!>", index)) return false;
-    uncommented += html[index];
-    index += 1;
-  }
-  const whitespace = (character) => character === " " || character === "\t" || character === "\r" || character === "\n";
-  let found = false;
-  for (let index = 0; index < uncommented.length; index += 1) {
-    if (uncommented[index] !== "<" || uncommented[index + 1] === "/") continue;
-    const remainder = uncommented.slice(index + 1);
+    if (html[index] !== "<" || html[index + 1] === "/") continue;
+    const remainder = html.slice(index + 1);
     const lower = remainder.toLowerCase();
     const name = lower.startsWith("script") ? "script" : lower.startsWith("link") ? "link" : null;
     if (!name) continue;
@@ -155,8 +150,8 @@ function hasNextStaticAssetTag(html) {
     if (!(boundary === ">" || boundary === "/" || whitespace(boundary))) continue;
     let end = index + 1 + name.length;
     let quote = null;
-    for (; end < uncommented.length; end += 1) {
-      const character = uncommented[end];
+    for (; end < html.length; end += 1) {
+      const character = html[end];
       if (quote) {
         if (character === quote) quote = null;
       } else if (character === "'" || character === "\"") {
@@ -165,42 +160,42 @@ function hasNextStaticAssetTag(html) {
         break;
       }
     }
-    if (end >= uncommented.length || quote) return false;
+    if (end >= html.length || quote) return false;
     const attributes = [];
     let cursor = index + 1 + name.length;
     while (cursor < end) {
-      while (cursor < end && whitespace(uncommented[cursor])) cursor += 1;
+      while (cursor < end && whitespace(html[cursor])) cursor += 1;
       if (cursor >= end) break;
-      if (uncommented[cursor] === "/") {
+      if (html[cursor] === "/") {
         cursor += 1;
-        while (cursor < end && whitespace(uncommented[cursor])) cursor += 1;
+        while (cursor < end && whitespace(html[cursor])) cursor += 1;
         if (cursor !== end) return false;
         break;
       }
       const start = cursor;
-      while (cursor < end && !whitespace(uncommented[cursor]) && !["=", "/", "'", "\"", "<"].includes(uncommented[cursor])) cursor += 1;
+      while (cursor < end && !whitespace(html[cursor]) && !["=", "/", "'", "\"", "<"].includes(html[cursor])) cursor += 1;
       if (cursor === start) return false;
-      if (["'", "\"", "<"].includes(uncommented[cursor])) return false;
-      const attributeName = uncommented.slice(start, cursor).toLowerCase();
-      while (cursor < end && whitespace(uncommented[cursor])) cursor += 1;
+      if (["'", "\"", "<"].includes(html[cursor])) return false;
+      const attributeName = html.slice(start, cursor).toLowerCase();
+      while (cursor < end && whitespace(html[cursor])) cursor += 1;
       let value = null;
       let quoted = false;
-      if (uncommented[cursor] === "=") {
+      if (html[cursor] === "=") {
         cursor += 1;
-        while (cursor < end && whitespace(uncommented[cursor])) cursor += 1;
-        if (uncommented[cursor] === "'" || uncommented[cursor] === "\"") {
+        while (cursor < end && whitespace(html[cursor])) cursor += 1;
+        if (html[cursor] === "'" || html[cursor] === "\"") {
           quoted = true;
-          const valueQuote = uncommented[cursor++];
+          const valueQuote = html[cursor++];
           const valueStart = cursor;
-          while (cursor < end && uncommented[cursor] !== valueQuote) cursor += 1;
+          while (cursor < end && html[cursor] !== valueQuote) cursor += 1;
           if (cursor >= end) return false;
-          value = uncommented.slice(valueStart, cursor++);
+          value = html.slice(valueStart, cursor++);
         } else {
           const valueStart = cursor;
-          while (cursor < end && !whitespace(uncommented[cursor]) && !["/", "'", "\"", "<", "="].includes(uncommented[cursor])) cursor += 1;
+          while (cursor < end && !whitespace(html[cursor]) && !["/", "'", "\"", "<", "="].includes(html[cursor])) cursor += 1;
           if (cursor === valueStart) return false;
-          value = uncommented.slice(valueStart, cursor);
-          if (cursor < end && !whitespace(uncommented[cursor]) && uncommented[cursor] !== "/") return false;
+          value = html.slice(valueStart, cursor);
+          if (cursor < end && !whitespace(html[cursor]) && html[cursor] !== "/") return false;
         }
       }
       attributes.push({ name: attributeName, value, quoted });
