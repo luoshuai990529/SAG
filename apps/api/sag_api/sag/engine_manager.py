@@ -168,7 +168,17 @@ class _EngineOwner:
             try:
                 await close_requested.wait()
             finally:
-                await engine.aclose()
+                session_factory = getattr(engine, "_session_factory", None)
+                owned_database = (
+                    session_factory.kw.get("bind")
+                    if session_factory is not None and hasattr(session_factory, "kw")
+                    else None
+                )
+                try:
+                    await engine.aclose()
+                finally:
+                    if owned_database is not None:
+                        await owned_database.dispose()
 
         task = asyncio.create_task(run(), name="sag-engine-owner")
         owner = cls(
@@ -455,6 +465,9 @@ class EngineManager:
                         health_check=False,
                     )
                     with map_sag_errors():
+                        from zleap.sag.db import close_database
+
+                        await close_database()
                         owner = await _EngineOwner.start(engine)
                     try:
                         await self._ensure_source_config(source_config_id, source)

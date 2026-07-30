@@ -252,6 +252,62 @@ async def test_engine_starts_and_closes_in_the_same_async_context(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_engine_async_closes_previous_sqlite_runtime_before_reset(caplog):
+    """新信源启动前必须异步释放旧 aiosqlite 池，不能同步 reset 后泄漏连接。"""
+    import logging
+
+    from sqlalchemy import text
+    from zleap.sag.db import get_session_factory
+
+    from sag_api.core.config import settings
+    from sag_api.sag.engine_manager import EngineManager
+
+    manager = EngineManager(settings)
+    caplog.set_level(logging.ERROR, logger="sqlalchemy.pool.impl.AsyncAdaptedQueuePool")
+    try:
+        await manager.provision("async-close-first")
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            await session.execute(text("SELECT 1"))
+
+        caplog.clear()
+        await manager.provision("async-close-second")
+
+        assert "MissingGreenlet" not in caplog.text
+    finally:
+        await manager.aclose_all()
+
+
+@pytest.mark.asyncio
+async def test_engine_close_disposes_every_owned_sqlite_pool():
+    """管理器关闭后必须逐个释放曾被 reset 的引擎自有连接池。"""
+    from sqlalchemy import text
+
+    from sag_api.core.config import settings
+    from sag_api.sag.engine_manager import EngineManager
+
+    manager = EngineManager(settings)
+    closed = False
+    try:
+        await manager.provision("owned-pool-first")
+        first_factory = manager._slots["owned-pool-first"].engine._session_factory
+        first_bind = first_factory.kw["bind"]
+
+        await manager.provision("owned-pool-second")
+        async with first_factory() as session:
+            await session.execute(text("SELECT 1"))
+        assert first_bind.sync_engine.pool.checkedin() == 1
+
+        await manager.aclose_all()
+        closed = True
+
+        assert first_bind.sync_engine.pool.checkedin() == 0
+    finally:
+        if not closed:
+            await manager.aclose_all()
+
+
+@pytest.mark.asyncio
 async def test_engine_lifecycle_reset_waits_for_inflight_operations():
     """新引擎重置共享资源前，必须等待已有引擎操作退出。"""
     from sag_api.sag.engine_manager import _EngineLifecycleGate
