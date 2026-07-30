@@ -28,6 +28,7 @@ log = get_logger("jobs")
 _BACKOFF_BASE_SECONDS = 2.0
 _RECOVERY_LOCK_RETRIES = 4
 _STOP_GRACE_SECONDS = 5.0
+_STOP_CANCEL_SECONDS = 1.0
 
 
 def _now() -> datetime:
@@ -125,7 +126,25 @@ class InProcessAsyncQueue(JobQueue):
                 )
                 for worker in pending:
                     worker.cancel()
-                await asyncio.gather(*pending, return_exceptions=True)
+                stopped, live = await asyncio.wait(
+                    pending,
+                    timeout=_STOP_CANCEL_SECONDS,
+                )
+                if stopped:
+                    await asyncio.gather(*stopped, return_exceptions=True)
+                if live:
+                    # Fail before clearing worker state. The lifespan cleanup
+                    # sequence must not dispose shared engines or SQLite pools
+                    # underneath a task that ignored cancellation; the
+                    # container runtime remains the final termination boundary.
+                    log.error(
+                        "任务队列取消回收超时（%.1fs），仍有 %d 个 worker 未停止",
+                        _STOP_CANCEL_SECONDS,
+                        len(live),
+                    )
+                    raise RuntimeError(
+                        f"{len(live)} worker(s) did not stop after cancellation"
+                    )
 
         # 不在停机阶段继续消费积压任务；数据库里的 QUEUED 记录会在下次启动时恢复。
         while True:

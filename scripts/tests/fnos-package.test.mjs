@@ -75,7 +75,10 @@ async function fakeRegistry(t, {
         environment: { SAG_AUTH_MODE: "password" },
       },
       web: { image: `ghcr.io/luoshuai990529/sag-web@${digestB}` },
-      gateway: { image: gatewayReference },
+      gateway: {
+        image: gatewayReference,
+        ports: ["${TRIM_SERVICE_PORT}:80"],
+      },
     },
   });
   await mkdir(bin, { recursive: true });
@@ -140,6 +143,16 @@ function structuralArgs(output) {
   ];
 }
 
+function structuralRenderArgs(output) {
+  return [
+    "--structural-test",
+    "--api-image", `test.invalid/sag-api@${digestA}`,
+    "--web-image", `test.invalid/sag-web@${digestB}`,
+    "--nginx-image", gatewayReference,
+    "--render-output", output,
+  ];
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", ...options });
   if (result.error) throw result.error;
@@ -164,6 +177,37 @@ test("test-only fixture references are refused outside structural-test mode", as
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /test-only|approved release repositories/i);
+});
+
+test("render-only output is restricted to structural test mode", async (t) => {
+  const root = await tempRoot(t);
+  const result = build([
+    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--nginx-image", gatewayReference,
+    "--render-output", path.join(root, "rendered-sag"),
+  ]);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /render-output.*only.*structural-test/i);
+});
+
+test("structural render output cannot escape the operating-system temp directory", () => {
+  const result = build(structuralRenderArgs(path.join(repoRoot, "rendered-sag-test-only")));
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /temporary directory/i);
+});
+
+test("package build rejects simultaneous FPK and rendered-tree outputs", async (t) => {
+  const root = await tempRoot(t);
+  const result = build([
+    ...structuralRenderArgs(path.join(root, "rendered-sag")),
+    "--output", path.join(root, "sag.fpk"),
+  ]);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /exactly one of.*output.*render-output/i);
 });
 
 test("release build refuses an immutable Nginx digest absent from the reviewed policy", async (t) => {
@@ -320,21 +364,16 @@ test("lifecycle scripts have valid Bash syntax and the official callback shape",
   }
 });
 
-test("structural mode renders and fnpack-builds an official package only in a temp directory", {
-  skip: process.env.SAG_FNPACK_TESTS !== "1",
-}, async (t) => {
+test("structural mode renders and validates the real package tree in every environment", async (t) => {
   const root = await tempRoot(t);
-  const output = path.join(root, "sag-structural-test.fpk");
-  const result = build(structuralArgs(output));
+  const output = path.join(root, "rendered-sag");
+  const result = build(structuralRenderArgs(output));
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  assert.match(result.stdout, /structural test package built/i);
-  assert.equal((await stat(output)).isFile(), true);
+  assert.match(result.stdout, /structural package rendered/i);
+  assert.equal((await stat(output)).isDirectory(), true);
 
-  const unpacked = path.join(root, "unpacked");
-  const app = path.join(root, "app");
-  run("mkdir", ["-p", unpacked, app]);
-  run("tar", ["-xzf", output, "-C", unpacked]);
-  run("tar", ["-xzf", path.join(unpacked, "app.tgz"), "-C", app]);
+  const unpacked = output;
+  const app = path.join(unpacked, "app");
 
   const manifest = await readFile(path.join(unpacked, "manifest"), "utf8");
   for (const expected of [
@@ -408,5 +447,23 @@ test("structural mode renders and fnpack-builds an official package only in a te
   for (const command of await readdir(path.join(unpacked, "cmd"))) {
     assert.notEqual((await stat(path.join(unpacked, "cmd", command))).mode & 0o111, 0, command);
   }
+  await assert.rejects(access(path.join(sourcePackage, "sag.fpk")));
+});
+
+test("verified fnpack builds an official package only in a temp directory", {
+  skip: process.env.SAG_FNPACK_TESTS !== "1",
+}, async (t) => {
+  const root = await tempRoot(t);
+  const output = path.join(root, "sag-structural-test.fpk");
+  const result = build(structuralArgs(output));
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /structural test package built/i);
+  assert.equal((await stat(output)).isFile(), true);
+
+  const unpacked = path.join(root, "unpacked");
+  run("mkdir", ["-p", unpacked]);
+  run("tar", ["-xzf", output, "-C", unpacked]);
+  await access(path.join(unpacked, "manifest"));
+  await access(path.join(unpacked, "app.tgz"));
   await assert.rejects(access(path.join(sourcePackage, "sag.fpk")));
 });

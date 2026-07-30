@@ -51,6 +51,7 @@ function parseArgs(argv) {
       "--web-image": "web",
       "--nginx-image": "nginx",
       "--output": "output",
+      "--render-output": "renderOutput",
     };
     const name = names[argument];
     if (!name) fail(`unknown argument: ${argument}`);
@@ -80,9 +81,14 @@ function validateInputs(options, gatewayPolicy) {
       }
     }
   }
-  if (!options.output) fail("--output is required");
+  if (Boolean(options.output) === Boolean(options.renderOutput)) {
+    fail("exactly one of --output or --render-output is required");
+  }
+  if (options.renderOutput && !options.structuralTest) {
+    fail("--render-output is available only with --structural-test");
+  }
   if (options.structuralTest) {
-    const output = path.resolve(options.output);
+    const output = path.resolve(options.output || options.renderOutput);
     const temp = path.resolve(os.tmpdir());
     if (output !== temp && !output.startsWith(`${temp}${path.sep}`)) {
       fail("--structural-test output must stay in the operating-system temporary directory");
@@ -201,6 +207,17 @@ async function main() {
   try {
     const composePath = await renderPackage(renderedPackage, options);
     run(process.execPath, [validator, composePath], { cwd: repoRoot });
+    if (options.renderOutput) {
+      const output = path.resolve(options.renderOutput);
+      await mkdir(path.dirname(output), { recursive: true });
+      await cp(renderedPackage, output, {
+        recursive: true,
+        force: false,
+        errorOnExist: true,
+      });
+      console.log(`structural package rendered: ${output}`);
+      return;
+    }
     run("fnpack", ["build"], { cwd: renderedPackage });
 
     const builtPackage = path.join(renderedPackage, "sag.fpk");

@@ -91,8 +91,26 @@ function validateApiAuth(api, errors) {
   );
 }
 
-function validateNoHostPorts(name, service, errors) {
-  if (Array.isArray(service.ports) && service.ports.length > 0) {
+const expectedGatewayPort = "${TRIM_SERVICE_PORT}:80";
+
+function validateHostExposure(name, service, errors) {
+  if (service.network_mode === "host") {
+    errors.push(`${name} must not use host networking in a release Compose file`);
+  }
+  if (name === "gateway") {
+    if (
+      !Array.isArray(service.ports)
+      || service.ports.length !== 1
+      || service.ports[0] !== expectedGatewayPort
+    ) {
+      errors.push(`gateway must publish exactly ${expectedGatewayPort}`);
+    }
+    return;
+  }
+  if (
+    service.ports !== undefined
+    && (!Array.isArray(service.ports) || service.ports.length > 0)
+  ) {
     errors.push(`${name} must not publish host ports in a release Compose file`);
   }
 }
@@ -108,6 +126,7 @@ function validate(compose, gatewayPolicy) {
       continue;
     }
     validateImage(name, service, errors);
+    validateHostExposure(name, service, errors);
   }
 
   for (const name of ["api", "web"]) {
@@ -115,7 +134,6 @@ function validate(compose, gatewayPolicy) {
       errors.push(`Compose must define the ${name} service`);
       continue;
     }
-    validateNoHostPorts(name, services[name], errors);
   }
   if (services.api && typeof services.api === "object") {
     validateApiSecret(services.api, errors);

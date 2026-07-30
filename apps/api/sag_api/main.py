@@ -37,6 +37,14 @@ _INSECURE_SECRETS = {
 }
 
 
+async def _shutdown_runtime(app: FastAPI) -> None:
+    """Stop components in dependency order without disposing under a live queue worker."""
+    await app.state.agent_runtime.stop()
+    await app.state.job_queue.stop()
+    await app.state.engine_manager.aclose_all()
+    await dispose_db()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging("DEBUG" if settings.debug else "INFO")
@@ -106,10 +114,7 @@ async def lifespan(app: FastAPI):
             warmup_task.cancel()
             with suppress(asyncio.CancelledError):
                 await warmup_task
-            await app.state.agent_runtime.stop()
-            await app.state.job_queue.stop()
-            await app.state.engine_manager.aclose_all()
-            await dispose_db()
+            await _shutdown_runtime(app)
         finally:
             uninstall_litellm_policy(litellm_policy)
 

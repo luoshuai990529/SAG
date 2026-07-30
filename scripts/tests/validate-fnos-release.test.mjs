@@ -17,7 +17,7 @@ function validCompose({
   apiAuthMode = "password",
   apiEnvFile = "",
   web = "",
-  gateway = "",
+  gateway = "    ports:\n      - \"${TRIM_SERVICE_PORT}:80\"\n",
 } = {}) {
   const environment = [
     apiAuthMode === null ? null : `      SAG_AUTH_MODE: ${apiAuthMode}`,
@@ -160,6 +160,44 @@ test("rejects a Web host port", async (t) => {
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /web must not publish host ports/);
+});
+
+test("rejects a missing gateway host port", async (t) => {
+  const compose = await fixture(t, validCompose({ gateway: "" }));
+  const result = validate(compose);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /gateway must publish exactly.*TRIM_SERVICE_PORT.*80/i);
+});
+
+test("rejects an extra gateway host port", async (t) => {
+  const compose = await fixture(t, validCompose({
+    gateway: "    ports:\n      - \"${TRIM_SERVICE_PORT}:80\"\n      - \"8443:443\"\n",
+  }));
+  const result = validate(compose);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /gateway must publish exactly.*TRIM_SERVICE_PORT.*80/i);
+});
+
+test("rejects a lifecycle helper host port", async (t) => {
+  const compose = await fixture(t, `${validCompose()}  lifecycle-helper:
+    image: ghcr.io/luoshuai990529/sag-api@${digest}
+    ports:
+      - "9000:9000"
+`);
+  const result = validate(compose);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /lifecycle-helper must not publish host ports/i);
+});
+
+test("rejects host networking on any service", async (t) => {
+  const compose = await fixture(t, validCompose({ web: "    network_mode: host\n" }));
+  const result = validate(compose);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /web must not use host networking/i);
 });
 
 test("rejects a non-digest image reference", async (t) => {

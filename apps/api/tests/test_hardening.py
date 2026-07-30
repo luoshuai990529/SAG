@@ -190,6 +190,95 @@ async def test_job_queue_stop_allows_active_job_to_reach_safe_boundary(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_job_queue_stop_fails_bounded_without_disposing_under_live_worker(monkeypatch):
+    """A cancellation-resistant worker cannot block shutdown or be silently detached."""
+    from sag_api.core.db import SessionLocal, init_db
+    from sag_api.db.models import Job
+    from sag_api.enums import JobStatus, JobType
+    from sag_api.jobs import inproc
+    from sag_api.jobs.tasks import TASK_HANDLERS
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(_session, _job, **_kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            await release.wait()
+
+    monkeypatch.setitem(TASK_HANDLERS, JobType.PROCESS_DOCUMENT, handler)
+    monkeypatch.setattr(inproc, "_STOP_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(inproc, "_STOP_CANCEL_SECONDS", 0.01, raising=False)
+    await init_db()
+    async with SessionLocal() as session:
+        job = Job(type=JobType.PROCESS_DOCUMENT, status=JobStatus.QUEUED)
+        session.add(job)
+        await session.commit()
+        job_id = job.id
+
+    queue = inproc.InProcessAsyncQueue(SessionLocal, engine_manager=None, concurrency=1)
+    await queue.start()
+    await queue.enqueue(job_id)
+    await asyncio.wait_for(started.wait(), timeout=1)
+    stop_task = asyncio.create_task(queue.stop())
+
+    try:
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        with pytest.raises(RuntimeError, match="worker.*did not stop"):
+            await asyncio.wait_for(asyncio.shield(stop_task), timeout=0.5)
+        assert queue._workers
+    finally:
+        release.set()
+        await asyncio.gather(stop_task, return_exceptions=True)
+        await asyncio.gather(*queue._workers, return_exceptions=True)
+        await queue.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_shutdown_does_not_dispose_engines_after_queue_stop_failure(monkeypatch):
+    """A live queue worker keeps shared engine and DB resources intact."""
+    from types import SimpleNamespace
+
+    from sag_api import main
+
+    calls = []
+
+    class AgentRuntime:
+        async def stop(self):
+            calls.append("agent")
+
+    class JobQueue:
+        async def stop(self):
+            calls.append("queue")
+            raise RuntimeError("worker did not stop")
+
+    class EngineManager:
+        async def aclose_all(self):
+            calls.append("engines")
+
+    async def dispose_db():
+        calls.append("database")
+
+    monkeypatch.setattr(main, "dispose_db", dispose_db)
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            agent_runtime=AgentRuntime(),
+            job_queue=JobQueue(),
+            engine_manager=EngineManager(),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="worker did not stop"):
+        await main._shutdown_runtime(app)
+
+    assert calls == ["agent", "queue"]
+
+
+@pytest.mark.asyncio
 async def test_engine_lru_eviction():
     """超出缓存上限逐出最久未用；持锁的槽不被逐出。"""
     from sag_api.core.config import settings
