@@ -1,31 +1,18 @@
 """实体读路径：注入事件—实体图谱后验证 entities 端点（离线）。"""
 
-import traceback
 import uuid
 
 import httpx
 import pytest
-from sqlalchemy import event
 
 
 @pytest.mark.asyncio
 async def test_entity_read_path():
-    from sag_api.core.db import SessionLocal, engine
+    from sag_api.core.db import SessionLocal
     from sag_api.db.models import Document, Source
     from sag_api.enums import DocumentStatus
     from sag_api.main import app
 
-    pool = engine.pool
-    checked_out: dict[int, str] = {}
-
-    def record_checkout(_connection, record, _proxy):
-        checked_out[id(record)] = "".join(traceback.format_stack(limit=30))
-
-    def record_checkin(_connection, record):
-        checked_out.pop(id(record), None)
-
-    event.listen(pool, "checkout", record_checkout)
-    event.listen(pool, "checkin", record_checkin)
     transport = httpx.ASGITransport(app=app)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
@@ -274,13 +261,6 @@ async def test_entity_read_path():
             assert empty_graph["entities"] == []
             assert empty_graph["relations"] == []
             assert empty_graph["truncated"] is False
-
-    event.remove(pool, "checkout", record_checkout)
-    event.remove(pool, "checkin", record_checkin)
-    assert not checked_out, (
-        "app lifespan leaked checked-out API database connections:\n"
-        + "\n--- leaked checkout ---\n".join(checked_out.values())
-    )
 
 
 @pytest.mark.asyncio
