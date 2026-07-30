@@ -213,6 +213,45 @@ async def test_engine_close_all_waits_for_inflight_use():
 
 
 @pytest.mark.asyncio
+async def test_engine_starts_and_closes_in_the_same_async_context(monkeypatch):
+    """引擎资源 token 必须在创建它的 Context 中释放。"""
+    from contextvars import ContextVar
+
+    from sag_api.core.config import settings
+    from sag_api.sag import engine_manager as engine_manager_module
+
+    current_engine = ContextVar("test_engine_resources", default=None)
+
+    class ContextBoundEngine:
+        instances = []
+
+        def __init__(self, *_args, **_kwargs):
+            self.token = None
+            self.closed = False
+            self.instances.append(self)
+
+        async def start(self):
+            self.token = current_engine.set(self)
+
+        async def aclose(self):
+            current_engine.reset(self.token)
+            self.closed = True
+
+    async def no_op(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(engine_manager_module, "DataEngine", ContextBoundEngine)
+    manager = engine_manager_module.EngineManager(settings)
+    monkeypatch.setattr(manager, "_ensure_source_config", no_op)
+    monkeypatch.setattr(manager, "_ensure_universe_query_indexes", no_op)
+
+    await asyncio.create_task(manager.provision("context-bound-source"))
+    await manager.aclose_all()
+
+    assert ContextBoundEngine.instances[0].closed is True
+
+
+@pytest.mark.asyncio
 async def test_engine_lifecycle_reset_waits_for_inflight_operations():
     """新引擎重置共享资源前，必须等待已有引擎操作退出。"""
     from sag_api.sag.engine_manager import _EngineLifecycleGate

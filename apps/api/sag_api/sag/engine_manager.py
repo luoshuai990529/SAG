@@ -144,8 +144,56 @@ def _utc_time(value: datetime | None) -> datetime | None:
 
 
 @dataclass
+class _EngineOwner:
+    """Keep a DataEngine's ContextVar lifecycle inside one asyncio task."""
+
+    engine: DataEngine
+    close_requested: asyncio.Event
+    started: asyncio.Future[None]
+    task: asyncio.Task[None]
+
+    @classmethod
+    async def start(cls, engine: DataEngine) -> _EngineOwner:
+        close_requested = asyncio.Event()
+        started = asyncio.get_running_loop().create_future()
+
+        async def run() -> None:
+            try:
+                await engine.start()
+            except BaseException as error:
+                if not started.done():
+                    started.set_exception(error)
+                return
+            started.set_result(None)
+            try:
+                await close_requested.wait()
+            finally:
+                await engine.aclose()
+
+        task = asyncio.create_task(run(), name="sag-engine-owner")
+        owner = cls(
+            engine=engine,
+            close_requested=close_requested,
+            started=started,
+            task=task,
+        )
+        try:
+            await asyncio.shield(started)
+        except BaseException:
+            close_requested.set()
+            await asyncio.shield(task)
+            raise
+        return owner
+
+    async def aclose(self) -> None:
+        self.close_requested.set()
+        await self.task
+
+
+@dataclass
 class _Slot:
     engine: DataEngine
+    owner: _EngineOwner | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     state_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     idle: asyncio.Event = field(default_factory=asyncio.Event)
@@ -157,6 +205,12 @@ class _Slot:
     def __post_init__(self) -> None:
         self.idle.set()
         self.concurrent_allowed.set()
+
+    async def aclose(self) -> None:
+        if self.owner is not None:
+            await self.owner.aclose()
+            return
+        await self.engine.aclose()
 
 
 class _EngineLifecycleGate:
@@ -401,20 +455,20 @@ class EngineManager:
                         health_check=False,
                     )
                     with map_sag_errors():
-                        await engine.start()
+                        owner = await _EngineOwner.start(engine)
                     try:
                         await self._ensure_source_config(source_config_id, source)
                         await self._ensure_universe_query_indexes()
                     except Exception:
                         try:
-                            await engine.aclose()
+                            await owner.aclose()
                         except Exception:  # noqa: BLE001 - preserve provisioning error
                             log.exception(
                                 "初始化失败后的引擎关闭异常 source_config_id=%s",
                                 source_config_id,
                             )
                         raise
-                    slot = _Slot(engine=engine)
+                    slot = _Slot(engine=engine, owner=owner)
                     self._slots[source_config_id] = slot
                     await self._evict_lru(keep=source_config_id)
         return slot
@@ -460,7 +514,7 @@ class EngineManager:
             try:
                 await slot.idle.wait()
                 async with slot.lock:
-                    await slot.engine.aclose()
+                    await slot.aclose()
                 log.info("LRU 逐出引擎 source_config_id=%s（缓存上限 %d）", victim, self._cache_size)
             except Exception as e:  # noqa: BLE001
                 log.warning("逐出引擎失败 %s: %s", victim, e)
@@ -2731,7 +2785,7 @@ class EngineManager:
                 try:
                     await slot.idle.wait()
                     async with slot.lock:  # 等待在途操作结束
-                        await slot.engine.aclose()
+                        await slot.aclose()
                 except Exception as e:  # noqa: BLE001
                     log.warning("释放引擎失败 %s: %s", source_config_id, e)
 
@@ -2747,6 +2801,6 @@ class EngineManager:
                     try:
                         await slot.idle.wait()
                         async with slot.lock:
-                            await slot.engine.aclose()
+                            await slot.aclose()
                     except Exception as e:  # noqa: BLE001
                         log.warning("关闭引擎失败 %s: %s", scid, e)
