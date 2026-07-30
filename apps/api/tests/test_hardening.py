@@ -144,6 +144,52 @@ async def test_job_retry_backoff(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_job_queue_stop_allows_active_job_to_reach_safe_boundary(monkeypatch):
+    """Shutdown gives an in-flight job a bounded chance to commit cleanly."""
+    from sag_api.core.db import SessionLocal, init_db
+    from sag_api.db.models import Job
+    from sag_api.enums import JobStatus, JobType
+    from sag_api.jobs.inproc import InProcessAsyncQueue
+    from sag_api.jobs.tasks import TASK_HANDLERS
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = asyncio.Event()
+
+    async def handler(_session, _job, **_kwargs):
+        started.set()
+        await release.wait()
+        completed.set()
+
+    monkeypatch.setitem(TASK_HANDLERS, JobType.PROCESS_DOCUMENT, handler)
+    await init_db()
+    async with SessionLocal() as session:
+        job = Job(type=JobType.PROCESS_DOCUMENT, status=JobStatus.QUEUED)
+        queued_job = Job(type=JobType.PROCESS_DOCUMENT, status=JobStatus.QUEUED)
+        session.add(job)
+        session.add(queued_job)
+        await session.commit()
+        job_id = job.id
+        queued_job_id = queued_job.id
+
+    queue = InProcessAsyncQueue(SessionLocal, engine_manager=None, concurrency=1)
+    await queue.start()
+    await queue.enqueue(job_id)
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await queue.enqueue(queued_job_id)
+    asyncio.get_running_loop().call_later(0.05, release.set)
+
+    await queue.stop()
+
+    assert completed.is_set()
+    async with SessionLocal() as session:
+        done = await session.get(Job, job_id)
+        still_queued = await session.get(Job, queued_job_id)
+        assert done is not None and done.status == JobStatus.SUCCEEDED
+        assert still_queued is not None and still_queued.status == JobStatus.QUEUED
+
+
+@pytest.mark.asyncio
 async def test_engine_lru_eviction():
     """超出缓存上限逐出最久未用；持锁的槽不被逐出。"""
     from sag_api.core.config import settings

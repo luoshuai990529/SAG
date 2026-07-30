@@ -27,6 +27,7 @@ log = get_logger("jobs")
 # 退避基数（秒）：第 n 次重试等待 base**n。测试可 monkeypatch 缩短。
 _BACKOFF_BASE_SECONDS = 2.0
 _RECOVERY_LOCK_RETRIES = 4
+_STOP_GRACE_SECONDS = 5.0
 
 
 def _now() -> datetime:
@@ -51,15 +52,19 @@ class InProcessAsyncQueue(JobQueue):
         self._concurrency = concurrency
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._workers: list[asyncio.Task] = []
+        self._active_workers: set[asyncio.Task] = set()
         self._retry_tasks: set[asyncio.Task] = set()
         self._universe_user_locks: dict[str, asyncio.Lock] = {}
         self._started = False
+        self._stopping = False
 
     async def enqueue(self, job_id: str) -> None:
         await self._queue.put(job_id)
 
     def _schedule_retry(self, job_id: str, delay: float) -> None:
         """退避后重新入队（不阻塞 worker）。"""
+        if self._stopping:
+            return
 
         async def _later() -> None:
             try:
@@ -76,6 +81,7 @@ class InProcessAsyncQueue(JobQueue):
         if self._started:
             return
         self._started = True
+        self._stopping = False
         try:
             # Recover before workers begin consuming so a failed startup cannot
             # leave detached workers holding database sessions.
@@ -90,20 +96,48 @@ class InProcessAsyncQueue(JobQueue):
         log.info("任务队列已启动（并发=%d）", self._concurrency)
 
     async def stop(self) -> None:
+        self._stopping = True
         retry_tasks = list(self._retry_tasks)
         for t in retry_tasks:
             t.cancel()
         if retry_tasks:
             await asyncio.gather(*retry_tasks, return_exceptions=True)
         self._retry_tasks.clear()
-        for w in self._workers:
+
+        workers = list(self._workers)
+        active_workers = {worker for worker in self._active_workers if not worker.done()}
+        idle_workers = [worker for worker in workers if worker not in active_workers]
+        for w in idle_workers:
             w.cancel()
-        for w in self._workers:
+        if idle_workers:
+            await asyncio.gather(*idle_workers, return_exceptions=True)
+
+        if active_workers:
+            _, pending = await asyncio.wait(
+                active_workers,
+                timeout=_STOP_GRACE_SECONDS,
+            )
+            if pending:
+                log.warning(
+                    "任务队列优雅停机超时（%.1fs），取消 %d 个仍在执行的任务",
+                    _STOP_GRACE_SECONDS,
+                    len(pending),
+                )
+                for worker in pending:
+                    worker.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+
+        # 不在停机阶段继续消费积压任务；数据库里的 QUEUED 记录会在下次启动时恢复。
+        while True:
             try:
-                await w
-            except asyncio.CancelledError:
-                pass
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            else:
+                self._queue.task_done()
+
         self._workers.clear()
+        self._active_workers.clear()
         self._universe_user_locks.clear()
         self._started = False
 
@@ -137,8 +171,14 @@ class InProcessAsyncQueue(JobQueue):
             log.info("恢复 %d 个未完成任务", len(rows))
 
     async def _worker_loop(self, idx: int) -> None:
-        while True:
+        while not self._stopping:
             job_id = await self._queue.get()
+            if self._stopping:
+                self._queue.task_done()
+                return
+            worker = asyncio.current_task()
+            if worker is not None:
+                self._active_workers.add(worker)
             try:
                 await self._run(job_id)
             except asyncio.CancelledError:
@@ -146,6 +186,8 @@ class InProcessAsyncQueue(JobQueue):
             except Exception:  # noqa: BLE001
                 log.exception("worker#%d 处理 job=%s 异常", idx, job_id)
             finally:
+                if worker is not None:
+                    self._active_workers.discard(worker)
                 self._queue.task_done()
 
     async def _run(self, job_id: str) -> None:
