@@ -1,10 +1,10 @@
 # SAG `1.4.0-fnos.1` 验收矩阵
 
-执行日期：2026-07-29（Asia/Shanghai）
+执行日期：2026-07-29 至 2026-07-30（Asia/Shanghai）
 
 基线：`origin/main@06f29b2ae571dfcedecc85577ee6910ed87a810a`
 
-候选分支：`feat/fnos-docker-app`
+候选分支：`feat/fnos-docker-app@f15c23a97621aee8258d85e77a69e191d97de126`
 
 设备基线：fnOS 1.2.0302，x86-64 VMware，2 vCPU / 4 GB
 
@@ -28,9 +28,10 @@
 | MAC-02 | `fnpack` 安装与校验 | 通过 | 1.2.3；SHA-256 `d40cb00896cb2a5d211357d255750ed0cbe7f2d141df671c2b717afb4e74bf77` | [Mac 准备](./mac-preparation.md) |
 | MAC-03 | 官方 hello-docker 本地 `fnpack build` | 通过 | 临时 `.fpk` SHA-256 `39c0090f2ca037c70af42c1197c1940329959722ceca2a914cdb291e90f61b87` | [Mac 准备](./mac-preparation.md) |
 | CODE-01 | API Ruff | 通过 | `uv run ruff check sag_api/ sag_agent/ tests/`：All checks passed | 命令摘要；截图不适用 |
-| CODE-02 | API pytest | 通过 | `uv run python -m pytest -q`：210 passed；认证相关聚焦回归 43 passed | 命令摘要；截图不适用 |
+| CODE-02 | API pytest | 通过 | macOS 与 Linux amd64：211 passed；GitHub Runner 后端 job 通过 | [CI-01 证据](./evidence/2026-07-30/ci-01/summary.md) |
 | CODE-03 | Web 单测 | 通过 | `npm run test:unit`：49 files、358 tests passed | 命令摘要；截图不适用 |
 | CODE-04 | Web 类型/Lint/生产构建 | 通过 | `tsc --noEmit`、ESLint 0 warning、Next.js 15.5.20 production build 均通过 | 命令摘要；截图不适用 |
+| CODE-05 | GitHub PR CI | 通过 | PR #1 的后端、前端、fnOS 发布安全回归三个 job 均为 SUCCESS | [CI-01 证据](./evidence/2026-07-30/ci-01/summary.md) |
 | PKG-01 | 发布 Compose 拒绝可变镜像、弱密钥和额外端口 | 通过 | CI 运行发布 Compose、包、生命周期与文档行为测试；以 CI 日志的具体测试清单为准，不维护易过期的合计数字 | 命令摘要；截图不适用 |
 | PKG-02 | 生命周期脚本与完整数据冷备行为 | 通过 | 包含空间/命令失败、冷备原子发布、失败后服务恢复和卸载选择回归 | 命令摘要；截图不适用 |
 | PKG-03 | Shell/JSON/Compose 静态检查 | 通过 | 10 个 Bash 脚本、4 个 JSON、源码与包模板 Compose config 均通过 | 命令摘要；截图不适用 |
@@ -42,7 +43,7 @@
 
 | ID | 验收项 | 状态 | 预期/日志摘要 | 截图位置 |
 | --- | --- | --- | --- | --- |
-| NET-01 | Mac 打开 fnOS 管理入口 | 待证据 | 前序交接记录称 `192.168.50.178:15666 -> 192.168.252.10:5666` 已到达登录页；当前无保留证据 | `docs/fnos/evidence/2026-07-29/net-01/`（待生成） |
+| NET-01 | Mac 打开 fnOS 管理入口 | 通过 | 2026-07-30 实测管理入口 HTTP 200，Chrome 显示 fnOS 登录页；此项不代表已登录或 `3080` 可用 | [NET-01 证据](./evidence/2026-07-30/net-01/summary.md) |
 | NET-02 | Windows `3080` NAT 与 `/24` 防火墙限制 | 待执行 | 需在 Windows VMware/防火墙配置后从 Mac 验证 | `docs/fnos/evidence/<date>/net-02/` |
 | FPK-01 | hello-docker 安装、打开、启停、卸载 | 待执行 | fnOS 管理会话需要用户登录 | `docs/fnos/evidence/<date>/fpk-01/` |
 | FPK-02 | SAG 全新安装、桌面打开、无模型密钥启动 | 阻塞 | 依赖 PKG-05、NET-02 和 fnOS 登录 | `docs/fnos/evidence/<date>/fpk-02/` |
