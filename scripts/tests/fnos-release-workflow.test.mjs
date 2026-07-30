@@ -6,12 +6,48 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const workflowPath = path.join(repoRoot, ".github/workflows/fnos-image-release.yml");
+const ciPath = path.join(repoRoot, ".github/workflows/ci.yml");
 
 function job(workflow, name) {
   const match = new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [a-z][a-z-]+:|(?![\\s\\S]))`, "m").exec(workflow);
   assert.ok(match, `missing ${name} job`);
   return match[1];
 }
+
+test("dedicated fnOS branch CI and immutable candidate tag gate release writes", async () => {
+  const [workflow, ci] = await Promise.all([
+    readFile(workflowPath, "utf8"),
+    readFile(ciPath, "utf8"),
+  ]);
+  const candidate = job(workflow, "candidate");
+
+  assert.match(ci, /branches: \[main, dev, feat\/fnos-docker-app\]/);
+  assert.match(workflow, /push:\n    tags:\n      - "fnos-candidate-\*"/);
+  assert.doesNotMatch(workflow, /workflow_dispatch|refs\/heads\/main|\binputs\./);
+  assert.match(workflow, /concurrency:\n  group: fnos-candidate-\$\{\{ github\.repository \}\}\n  cancel-in-progress: false/);
+  assert.match(candidate, /git ls-remote --heads origin feat\/fnos-docker-app/);
+  assert.match(candidate, /expected_tag="fnos-candidate-\$\{version\}-\$\{GITHUB_SHA:0:12\}"/);
+  assert.match(candidate, /test "\$GITHUB_REF_NAME" = "\$expected_tag"/);
+  assert.match(candidate, /test "\$GITHUB_SHA" = "\$remote_revision"/);
+  assert.match(candidate, /revision: \$\{\{ steps\.metadata\.outputs\.revision \}\}/);
+  assert.match(job(workflow, "quality"), /needs: candidate/);
+
+  for (const name of [
+    "gateway-security",
+    "local-amd64-smoke",
+    "staging",
+    "inspect-staging",
+    "smoke-staging",
+    "promote",
+  ]) {
+    const releaseJob = job(workflow, name);
+    assert.match(releaseJob, /needs(?:\.candidate|: [^\n]*candidate)/);
+    assert.match(releaseJob, /ref: \$\{\{ needs\.candidate\.outputs\.revision \}\}/);
+  }
+  assert.match(candidate, /ref: \$\{\{ github\.sha \}\}/);
+  assert.doesNotMatch(workflow.replace(candidate, ""), /ref: \$\{\{ github\.sha \}\}/);
+  assert.doesNotMatch(workflow, /revision=\$\{\{ github\.sha \}\}|sha-\$\{\{ github\.sha \}\}/);
+});
 
 test("fnOS release workflow pins actions and scopes package permissions", async () => {
   const workflow = await readFile(workflowPath, "utf8");
@@ -36,7 +72,7 @@ test("promotion requires an exact captured-digest runtime smoke", async () => {
   const smoke = job(workflow, "smoke-staging");
   const promote = job(workflow, "promote");
 
-  assert.match(smoke, /needs: inspect-staging/);
+  assert.match(smoke, /needs: \[candidate, inspect-staging\]/);
   assert.match(smoke, /API_IMAGE: ghcr\.io\/luoshuai990529\/sag-api@\$\{\{ needs\.inspect-staging\.outputs\.api_digest \}\}/);
   assert.match(smoke, /WEB_IMAGE: ghcr\.io\/luoshuai990529\/sag-web@\$\{\{ needs\.inspect-staging\.outputs\.web_digest \}\}/);
   assert.match(smoke, /smoke-fnos-release-images\.mjs smoke/);

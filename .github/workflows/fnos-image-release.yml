@@ -1,35 +1,25 @@
 name: fnOS Candidate Images
 
 on:
-  workflow_dispatch:
-    inputs:
-      candidate_version:
-        description: Reviewed fnOS candidate version to publish
-        required: true
-        default: 1.4.0-fnos.1
-        type: string
+  push:
+    tags:
+      - "fnos-candidate-*"
 
 concurrency:
-  group: fnos-candidate-${{ github.repository }}-${{ inputs.candidate_version }}
+  group: fnos-candidate-${{ github.repository }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  quality:
-    if: github.repository == 'luoshuai990529/SAG' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-    uses: ./.github/workflows/ci.yml
-
   candidate:
     name: Verify reviewed candidate metadata
-    needs: quality
-    if: github.repository == 'luoshuai990529/SAG' && github.ref == 'refs/heads/main'
+    if: github.repository == 'luoshuai990529/SAG'
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.metadata.outputs.version }}
+      revision: ${{ steps.metadata.outputs.revision }}
       staging_tag: ${{ steps.metadata.outputs.staging_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,26 +27,40 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
       - id: metadata
-        name: Verify repository, ref, manifest, and candidate input
+        name: Verify repository, tag, manifest, and dedicated branch HEAD
         shell: bash
-        env:
-          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "luoshuai990529/SAG"
-          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_TYPE" = "tag"
           test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
+          tag_revision="$(git rev-list -n 1 "${GITHUB_REF_NAME}^{commit}")"
+          test "$GITHUB_SHA" = "$tag_revision"
+          remote_line="$(git ls-remote --heads origin feat/fnos-docker-app)"
+          read -r remote_revision remote_ref extra <<<"$remote_line"
+          test -n "$remote_revision"
+          test "$remote_ref" = "refs/heads/feat/fnos-docker-app"
+          test -z "${extra:-}"
+          test "$GITHUB_SHA" = "$remote_revision"
           appname=$(awk -F= '/^appname[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2}' packages/fnos/sag/manifest)
           version=$(awk -F= '/^version[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2}' packages/fnos/sag/manifest)
           test "$appname" = "sag"
           test "$version" = "1.4.0-fnos.1"
-          test "$CANDIDATE_VERSION" = "$version"
+          expected_tag="fnos-candidate-${version}-${GITHUB_SHA:0:12}"
+          test "$GITHUB_REF_NAME" = "$expected_tag"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'revision=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           printf 'staging_tag=staging-fnos-%s-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+  quality:
+    needs: candidate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
 
   gateway-security:
     name: Verify and scan reviewed gateway
-    needs: candidate
+    needs: [candidate, quality]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -66,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.candidate.outputs.revision }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
       - name: Verify reviewed policy and raw OCI index
         shell: bash
@@ -131,14 +135,14 @@ jobs:
 
   local-amd64-smoke:
     name: Build and smoke local linux/amd64 images
-    needs: candidate
+    needs: [candidate, quality]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.candidate.outputs.revision }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
       - name: Build local API image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.17.0
@@ -146,9 +150,9 @@ jobs:
           context: ./apps/api
           load: true
           platforms: linux/amd64
-          tags: sag-api-smoke:${{ github.sha }}
+          tags: sag-api-smoke:${{ needs.candidate.outputs.revision }}
           labels: |
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.candidate.outputs.revision }}
             org.opencontainers.image.version=${{ needs.candidate.outputs.version }}
       - name: Build local Web image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.17.0
@@ -157,9 +161,9 @@ jobs:
           load: true
           platforms: linux/amd64
           build-args: NEXT_PUBLIC_API_BASE=/
-          tags: sag-web-smoke:${{ github.sha }}
+          tags: sag-web-smoke:${{ needs.candidate.outputs.revision }}
           labels: |
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.candidate.outputs.revision }}
             org.opencontainers.image.version=${{ needs.candidate.outputs.version }}
       - name: Smoke API readiness and Web root
         shell: bash
@@ -172,8 +176,8 @@ jobs:
             --env SAG_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
             --env SAG_AUTH_MODE=password \
             --env SAG_AUTH_BOOTSTRAP_TOKEN=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 \
-            sag-api-smoke:"$GITHUB_SHA"
-          docker run --detach --name sag-web-smoke --publish 13000:3000 sag-web-smoke:"$GITHUB_SHA"
+            sag-api-smoke:"${{ needs.candidate.outputs.revision }}"
+          docker run --detach --name sag-web-smoke --publish 13000:3000 sag-web-smoke:"${{ needs.candidate.outputs.revision }}"
           for attempt in {1..30}; do
             curl --fail --silent --show-error http://127.0.0.1:18000/api/v1/system/ready >/dev/null && break
             sleep 2
@@ -222,7 +226,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.candidate.outputs.revision }}
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.6.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
@@ -239,7 +243,7 @@ jobs:
           build-args: ${{ matrix.build_args }}
           tags: ${{ matrix.image }}:${{ needs.candidate.outputs.staging_tag }}
           labels: |
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.candidate.outputs.revision }}
             org.opencontainers.image.version=${{ needs.candidate.outputs.version }}
 
   inspect-staging:
@@ -254,11 +258,12 @@ jobs:
       web_digest: ${{ steps.digests.outputs.web_digest }}
     env:
       CANDIDATE_VERSION: ${{ needs.candidate.outputs.version }}
+      CANDIDATE_REVISION: ${{ needs.candidate.outputs.revision }}
       STAGING_TAG: ${{ needs.candidate.outputs.staging_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.candidate.outputs.revision }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
         with:
@@ -270,8 +275,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          api_digest="$(node scripts/fnos-release-registry.mjs verify-staging --docker docker --image ghcr.io/luoshuai990529/sag-api --staging-tag "$STAGING_TAG" --revision "$GITHUB_SHA" --version "$CANDIDATE_VERSION")"
-          web_digest="$(node scripts/fnos-release-registry.mjs verify-staging --docker docker --image ghcr.io/luoshuai990529/sag-web --staging-tag "$STAGING_TAG" --revision "$GITHUB_SHA" --version "$CANDIDATE_VERSION")"
+          api_digest="$(node scripts/fnos-release-registry.mjs verify-staging --docker docker --image ghcr.io/luoshuai990529/sag-api --staging-tag "$STAGING_TAG" --revision "$CANDIDATE_REVISION" --version "$CANDIDATE_VERSION")"
+          web_digest="$(node scripts/fnos-release-registry.mjs verify-staging --docker docker --image ghcr.io/luoshuai990529/sag-web --staging-tag "$STAGING_TAG" --revision "$CANDIDATE_REVISION" --version "$CANDIDATE_VERSION")"
           node scripts/fnos-release-registry.mjs write-handoff --api-digest "$api_digest" --web-digest "$web_digest" --github-output "$GITHUB_OUTPUT" --artifact verified-digests.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -286,7 +291,7 @@ jobs:
 
   smoke-staging:
     name: Smoke exact captured linux/amd64 digests
-    needs: inspect-staging
+    needs: [candidate, inspect-staging]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -298,7 +303,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.candidate.outputs.revision }}
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
         with:
           registry: ghcr.io
@@ -324,13 +329,13 @@ jobs:
       packages: write
     env:
       CANDIDATE_VERSION: ${{ needs.candidate.outputs.version }}
-      COMMIT_TAG: sha-${{ github.sha }}
+      COMMIT_TAG: sha-${{ needs.candidate.outputs.revision }}
       API_DIGEST: ${{ needs.inspect-staging.outputs.api_digest }}
       WEB_DIGEST: ${{ needs.inspect-staging.outputs.web_digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.candidate.outputs.revision }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.3.0
         with:
