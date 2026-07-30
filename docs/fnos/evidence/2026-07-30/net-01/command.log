@@ -1,0 +1,14 @@
+2026-07-30 10:13:41 CST (+0800)
+
+$ curl --connect-timeout 3 --max-time 8 http://192.168.50.178:15666/
+GET / management_port=15666 http_code=200 remote_ip=192.168.50.178 connect_seconds=0.008451 total_seconds=0.025319
+
+$ curl --connect-timeout 3 --max-time 8 http://192.168.50.178:3080/
+curl: (28) Failed to connect to 192.168.50.178 port 3080 after 3001 ms: Timeout was reached
+GET / sag_port=3080 http_code=000 connect_seconds=0.000000 total_seconds=3.001552
+
+Browser:
+URL=http://192.168.50.178:15666/login
+Title=SAG-fnOS - 飞牛 fnOS
+Visible controls=用户名、密码、保持登录、忘记密码、登录
+Authentication state=未登录
