@@ -31,7 +31,7 @@
 | CODE-02 | API pytest | 通过 | 最终 macOS ARM64、本地 Linux amd64 与 GitHub Linux x86-64 均为 216 passed；早期锁修复提交的 Backend 初跑及两次主动重跑均成功；无 SQLite 锁冲突 | [CI-02 证据](./evidence/2026-07-30/ci-02/summary.md) |
 | CODE-03 | Web 单测 | 通过 | `npm run test:unit`：49 files、358 tests passed | 命令摘要；截图不适用 |
 | CODE-04 | Web 类型/Lint/生产构建 | 通过 | `tsc --noEmit`、ESLint 0 warning、Next.js 15.5.20 production build 均通过 | 命令摘要；截图不适用 |
-| CODE-05 | GitHub PR CI 与独立复审 | 通过 | PR #1 最终被测提交 `81abb9f` 的后端、前端、fnOS 发布安全回归均成功；独立复审无 Critical/Important/Minor，结论 Ready to merge | [CI-02 证据](./evidence/2026-07-30/ci-02/summary.md) |
+| CODE-05 | GitHub CI 与独立复审 | 通过 | PR #1 最终被测提交 `81abb9f` 的后端、前端、fnOS 发布安全回归均成功；独立复审无 Critical/Important/Minor。fnOS 改造按产品决策永久保留在 `feat/fnos-docker-app`，关闭 PR #1，不合并 | [CI-02 证据](./evidence/2026-07-30/ci-02/summary.md) |
 | PKG-01 | 发布 Compose 拒绝可变镜像、弱密钥和额外端口 | 通过 | CI 运行发布 Compose、包、生命周期与文档行为测试；以 CI 日志的具体测试清单为准，不维护易过期的合计数字 | 命令摘要；截图不适用 |
 | PKG-02 | 生命周期脚本与完整数据冷备行为 | 通过 | 包含空间/命令失败、冷备原子发布、失败后服务恢复和卸载选择回归 | 命令摘要；截图不适用 |
 | PKG-03 | Shell/JSON/Compose 静态检查 | 通过 | 10 个 Bash 脚本、4 个 JSON、源码与包模板 Compose config 均通过 | 命令摘要；截图不适用 |
@@ -66,7 +66,7 @@
 
 | ID | 门禁 | 当前结论 |
 | --- | --- | --- |
-| REL-01 | GHCR API/Web 公开多架构镜像 | 阻塞：仅 `luoshuai990529/SAG@main` 可手动运行候选工作流；它必须先完成 CI、本地 amd64 smoke、唯一 staging index 与元数据检查，再以捕获的 API/Web `image@digest` 独立执行密码认证和 Web HTTP 冒烟，成功后才对账式提升候选/commit 标签（缺失创建、同 digest 接受、不同 digest 失败）。验收证据还必须记录运行产生的四个最终 digest，并确认发布期间 GHCR package 仅由该流程独占写入；并发锁和 postcheck 不能替代此控制。这不是 registry 级不可变声明，包仍须固定 digest。当前尚未发布，包不可匿名检查。 |
+| REL-01 | GHCR API/Web 公开多架构镜像 | 阻塞：先确认 `feat/fnos-docker-app` 远端 HEAD 的普通 CI 全绿，再推送精确的 `fnos-candidate-1.4.0-fnos.1-${revision:0:12}` Tag；Tag 门禁在 registry 写入前拒绝错误版本、旧提交和非独立分支 HEAD。工作流完成 amd64 本地 smoke、唯一 staging index、元数据检查、捕获 digest 的密码认证/Web 冒烟和对账式提升。首次发布后在两个 Package Settings 中一次性设为 Public，再重新运行无登录的匿名 postcheck；`fnos-verified-digests-*` artifact 和四个最终引用作为证据。当前尚未发布，包不可匿名检查。 |
 | REL-02 | x86-64 fnOS 实机 | 待执行：VM 结果不能替代实机认证 |
 | REL-03 | ARM64 fnOS 实机 | 不适用：本候选包声明 x86；正式声明 ARM64 支持前必须新增实机认证 |
 | REL-04 | 飞牛应用中心上架 | 待执行：发布材料、审核和平台反馈属于候选版之后的门禁 |

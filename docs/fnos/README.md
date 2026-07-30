@@ -19,6 +19,9 @@
   完成一次初始化。不能通过名字登录或改名取得令牌。本地开发仍默认保留无密码名字登录。
 - Mac 已完成 Docker、Buildx、Compose、`fnpack` 和 `hello-world` 本地准备。`appcenter-cli` 是 fnOS 设备上的工具，不是 Mac 必装工具。
 - 源码、生命周期测试和临时结构包已经具备；公开 GHCR 镜像、正式 `.fpk`、Windows `3080` NAT、防火墙和 fnOS UI 生命周期验收仍是外部门禁。
+- fnOS 改造永久保留在 `feat/fnos-docker-app`，关闭 PR #1，不合并到 `main`；
+  普通 push 直接运行该分支 CI，只有
+  `fnos-candidate-1.4.0-fnos.1-${revision:0:12}` 候选 Tag 可以触发镜像发布。
 - 候选发布先在 CI runner 本地 smoke amd64，再写入每次运行唯一的 GHCR staging tag；
   staging 前还会用 checksum 固定的 Trivy 扫描受评审、未过期的 Nginx
   `linux/amd64` digest；存在可修复 Critical/High 或 OCI 平台 metadata 不一致时
@@ -29,6 +32,9 @@
   不同 digest 则失败。该流程不能替代 GHCR 的 registry 级不可变策略；包消费者
   必须继续使用 digest。staging tag 的安全清理需要 tag 级 GHCR 操作，不能按
   digest 删除。
+- 首次 GHCR 发布后需要在两个 Package 的 Package Settings 中一次性设为 Public，
+  再重新运行不带 registry 凭据的匿名检查；捕获的 API/Web digest 保存在
+  `fnos-verified-digests-*` artifact 中，并作为正式 `.fpk` 的唯一镜像输入。
 - 正式发布前还必须补齐 x86-64 实机、ARM64 fnOS 实机和应用中心上架验证。本候选版不声明 ARM64 fnOS 支持。
 
 ## 文档导航

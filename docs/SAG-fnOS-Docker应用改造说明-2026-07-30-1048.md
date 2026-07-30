@@ -44,42 +44,50 @@
 12. **新增最小权限 lifecycle helper，并限制其网络、文件系统、挂载、capabilities 和 Compose 项目范围。**
     - 目的：在处理 root-owned 数据和密钥文件的同时，控制备份、恢复与删除操作的权限边界。
 
-13. **新增 GitHub Actions 多架构镜像流程，构建 API/Web 的 `linux/amd64` 和 `linux/arm64` 镜像并执行真实运行冒烟。**
+13. **将 `feat/fnos-docker-app` 固定为永久独立 fnOS 分支，关闭 PR #1，不合并到 `main`。**
+    - 目的：让大范围 fnOS 适配与主线产品演进彻底隔离，同时保留独立 CI 和长期维护能力。
+
+14. **新增候选 Tag 触发的 GitHub Actions 多架构镜像流程，构建 API/Web 的 `linux/amd64` 和 `linux/arm64` 镜像并执行真实运行冒烟。**
     - 目的：为 x86-64 fnOS 提供可运行候选镜像，同时验证 ARM64 镜像的构建和 OCI 元数据。
 
-14. **发布流程采用 staging digest、不可变标签提升和冲突拒绝机制，并固定 GitHub Actions 与仓库权限。**
+15. **候选 Tag 必须使用 `fnos-candidate-1.4.0-fnos.1-${revision:0:12}` 并精确指向远端独立分支 HEAD。**
+    - 目的：在 GHCR 写入前阻止错误版本、旧提交和其他分支发布同名候选镜像。
+
+16. **发布流程采用 staging digest、不可变标签提升和冲突拒绝机制，并固定 GitHub Actions 与仓库权限。**
     - 目的：防止候选标签被静默覆盖，并提高镜像供应链的可追溯性和可重试性。
 
-15. **`.fpk` Compose 强制使用 API、Web 和 Nginx 的不可变 digest，并拒绝 `latest`、`build:` 和内部端口映射。**
+17. **发布后通过 Package Settings 一次性公开 GHCR 包，并由无登录 job 匿名核对候选标签和 `verified-digests`。**
+    - 目的：遵循 GitHub 官方可见性操作边界，并证明 fnOS 无 registry 凭据也能拉取精确多架构镜像。
+
+18. **`.fpk` Compose 强制使用 API、Web 和 Nginx 的不可变 digest，并拒绝 `latest`、`build:` 和内部端口映射。**
     - 目的：保证不同时间安装同一候选包时拉取到完全相同的镜像内容。
 
-16. **Nginx 固定到经过策略校验和 Trivy 扫描的官方镜像 digest。**
+19. **Nginx 固定到经过策略校验和 Trivy 扫描的官方镜像 digest。**
     - 目的：阻断未经审核、过期或存在可修复 High/Critical 漏洞的网关镜像进入候选包。
 
-17. **补充 DataEngine 的异步关闭和独立数据库连接池释放机制。**
+20. **补充 DataEngine 的异步关闭和独立数据库连接池释放机制。**
     - 目的：减少跨异步上下文切换时遗留 SQLite 连接，提高容器停止、重启和升级时的资源回收可靠性。
 
-18. **新增 Compose、生命周期、认证、打包、镜像发布、网关安全策略和运维文档的自动化回归测试。**
+21. **新增 Compose、生命周期、认证、打包、镜像发布、网关安全策略和运维文档的自动化回归测试。**
     - 目的：让端口、digest、密钥、备份顺序、路径权限和发布状态机等关键约束能够持续验证。
 
-19. **新增 Mac 准备、网络转发、安装、升级、冷备恢复、卸载、故障排查和证据型验收文档。**
+22. **新增 Mac 准备、网络转发、安装、升级、冷备恢复、卸载、故障排查和证据型验收文档。**
     - 目的：为 Mac 开发机、Windows VMware 和 fnOS 管理端提供可重复执行的交付与验收路径。
 
-20. **修正文档中 `appcenter-cli` 的工具定位，并将测试环境地址与通用配置示例分开记录。**
+23. **修正文档中 `appcenter-cli` 的工具定位，并将测试环境地址与通用配置示例分开记录。**
     - 目的：明确 `appcenter-cli` 应运行在 fnOS 设备上，同时避免把当前测试 IP 固化为产品配置。
 
 ## 当前验证结果
 
-- API Ruff 已通过；本地 macOS 与 Linux ARM64 容器的 pytest 最近一次结果均为 `213 passed`。
+- API Ruff 已通过；最终 macOS ARM64、本地 Linux amd64 与 GitHub Linux x86-64 pytest 均为 `216 passed`。
 - Web 类型检查、Lint、单元测试和生产构建已通过。
 - fnOS Compose、生命周期、打包、发布与文档约束测试已通过。
-- GitHub PR 的 release-safety 和 frontend CI 已通过；backend 曾完整通过，但后续复跑在测试清理阶段复现一次 SQLite `database is locked`，稳定性修复与复验仍在进行中。
+- fnOS 分支的 GitHub release-safety、frontend 和 backend CI 已通过；SQLite 停机竞态修复及连续复跑已经完成。
 - Mac 已验证能够访问 fnOS 管理端 `192.168.50.178:15666`，相关命令日志和截图已存入 `docs/fnos/evidence/2026-07-30/net-01/`。
 
 ## 尚未计入“已完成”的外部验收
 
 - API/Web 正式 GHCR 候选镜像及真实 manifest-list digest 尚未发布。
 - 使用真实 digest 构建的 `sag-1.4.0-fnos.1.fpk` 和 SHA-256 文件尚未生成。
-- Backend CI 偶发 SQLite 锁冲突尚未完成根因修复和连续复跑验证。
 - Windows VMware 的 `3080` NAT、防火墙和 fnOS VM 安装、启停、重启、升级、卸载验证尚未完成。
 - Markdown/PDF 上传、索引、检索、流式问答和引用打开仍需在 fnOS VM 中使用私下提供的模型凭据验收。

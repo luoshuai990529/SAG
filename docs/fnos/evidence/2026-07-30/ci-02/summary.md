@@ -44,9 +44,11 @@ SQLite 操作的 aiosqlite 连接进入 invalidate/force-close 路径；SQLAlche
 5. 增加回归测试，证明在途任务完成为 `SUCCEEDED`，尚未开始的任务保持 `QUEUED`；
 6. 删除仅用于根因定位的全局连接池追踪夹具。
 
-合并前独立审查还补齐了全部服务的宿主端口/host-network 校验、常规 CI 的真实包树
+独立审查还补齐了全部服务的宿主端口/host-network 校验、常规 CI 的真实包树
 渲染与 Compose 解析，以及结构输出通过符号链接逃逸系统临时目录的防护。最终复审
-未发现 Critical、Important 或 Minor 问题，结论为 Ready to merge。
+未发现 Critical、Important 或 Minor 问题。后续产品决策明确 fnOS 改造永久保留在
+`feat/fnos-docker-app`，因此关闭 PR #1，不合并到 `main`；此处通过结论仅表示代码
+质量门禁通过。
 
 ## 本地连续验证
 

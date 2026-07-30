@@ -101,12 +101,23 @@ $rows | Sort-Object DisplayName | Format-List
 
 ## 2. 发布公开 GHCR 镜像
 
-仅在受权的 `luoshuai990529/SAG` 默认分支 `main` 上手动运行
-**fnOS Candidate Images**，输入：
+`feat/fnos-docker-app` 是长期独立的 fnOS 发布分支，禁止合并到 `main`。先把
+独立分支推送并等待该提交的普通 CI 全绿，然后关闭 PR #1，不合并。确认远端分支
+HEAD 与本地完全一致后，创建只对应当前提交的不可变候选 Tag：
 
-```text
-1.4.0-fnos.1
+```bash
+git fetch origin
+revision="$(git rev-parse HEAD)"
+test "$revision" = "$(git rev-parse origin/feat/fnos-docker-app)"
+candidate_tag="fnos-candidate-1.4.0-fnos.1-${revision:0:12}"
+git tag "$candidate_tag" "$revision"
+git push origin "$candidate_tag"
 ```
+
+只有形如 `fnos-candidate-1.4.0-fnos.1-${revision:0:12}`、且精确指向远端
+`feat/fnos-docker-app` HEAD 的 Tag 才能触发 **fnOS Candidate Images**。错误版本、
+旧提交、其他分支或名称不匹配会在任何 GHCR 写入前失败。全部 fnOS 候选运行使用同一
+concurrency 组串行执行，不会取消正在发布的运行。
 
 工作流发布：
 
@@ -115,8 +126,9 @@ ghcr.io/luoshuai990529/sag-api
 ghcr.io/luoshuai990529/sag-web
 ```
 
-工作流先从已 checkout 的 `GITHUB_SHA` 校验 `packages/fnos/sag/manifest` 的
-`appname=sag` 与候选版本，并完成可复用 CI 质量门禁。独立的只读
+工作流先校验 Tag、远端独立分支 HEAD、checkout commit，以及
+`packages/fnos/sag/manifest` 的 `appname=sag` 与候选版本，再完成可复用 CI 质量
+门禁。独立的只读
 `gateway-security` job 先校验 `packages/fnos/gateway-policy.json` 尚未过期，
 再对固定 Nginx index 的原始 OCI metadata 检查 amd64/arm64 子 manifest、版本标注和
 上游 revision。它下载官方 Trivy `0.70.0` Linux amd64 归档并核对 SHA-256
@@ -136,7 +148,8 @@ GHCR。
 本地冒烟成功后，工作流才把 amd64+arm64 的 manifest index 推送到本次运行唯一
 的 `staging-fnos-<run>-<attempt>-<sha>` 标签。它检查 staging 原始 index、拉取
 amd64 staging 镜像并验证 OCI revision/version 元数据，最后以服务器端
-已验证 digest 会作为 job output 和 artifact 保存。promotion 前，独立只读 job 只用
+已验证 digest 会作为 job output 和 `fnos-verified-digests-*` artifact 保存。
+promotion 前，独立只读 job 只用
 这两个 `image@digest` 在 amd64 runner 再次 pull/run：API 使用随机强密钥与临时数据卷
 验证 ready、name-only 401、bootstrap 初始化和日常密码登录，Web 验证根路径与登录页；
 资源在 `always()` 清理。通过后才用 `imagetools create` 提升为候选版本和
@@ -158,7 +171,13 @@ amd64 staging 镜像并验证 OCI revision/version 元数据，最后以服务�
 二进制及校验值的 runner 上设置 `SAG_FNPACK_TESTS=1` 后执行；不要为了让 CI
 变绿而跳过校验或下载未记录校验和的文件。
 
-发布后把两个 Packages 设为 Public，并记录 manifest-list digest。fnOS 安装期间不会配置 registry 凭据，因此必须能匿名拉取 GHCR 和 Docker Hub：
+GitHub 个人账户 Package 初次发布默认为 Private。GitHub 官方 Packages REST API
+不提供修改个人 Package 可见性的接口，因此首次发布后需要在两个 Package 的
+**Package Settings → Danger Zone → Change visibility** 中一次性设为 Public。
+此操作不可逆为 Private。首次 `anonymous-postcheck` 会在仍为 Private 时失败；公开
+完成后重新运行失败 job。该 job 不执行 `docker login`，会核对候选标签、从
+`verified-digests.json` 捕获的精确 digest 以及 amd64/arm64 平台。fnOS 安装期间不会
+配置 registry 凭据，因此以下匿名检查必须全部成功：
 
 ```bash
 docker buildx imagetools inspect ghcr.io/luoshuai990529/sag-api:1.4.0-fnos.1
