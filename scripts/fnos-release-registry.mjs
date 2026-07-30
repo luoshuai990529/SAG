@@ -140,6 +140,36 @@ function promote(options) {
   }
 }
 
+function resolvePublicTag(options, image, candidateVersion, expectedDigest) {
+  const reference = `${image}:${candidateVersion}`;
+  const result = docker(options, ["buildx", "imagetools", "inspect", "--format", "{{.Manifest.Digest}}", reference]);
+  if (result.status !== 0) fail(`could not anonymously resolve ${reference}: ${(result.stderr || result.stdout).trim()}`);
+  const observedDigest = exactDigest(result.stdout, `public candidate tag ${reference}`);
+  if (observedDigest !== expectedDigest) {
+    fail(`${reference} does not resolve to the captured digest ${expectedDigest}`);
+  }
+}
+
+function inspectPublicDigest(options, image, digest) {
+  const reference = `${image}@${digest}`;
+  const result = docker(options, ["buildx", "imagetools", "inspect", "--raw", reference]);
+  if (result.status !== 0) fail(`could not anonymously inspect ${reference}: ${(result.stderr || result.stdout).trim()}`);
+  requireIndex(result.stdout, reference);
+}
+
+function verifyPublic(options) {
+  const apiImage = requireOption(options, "api_image");
+  const webImage = requireOption(options, "web_image");
+  const candidateVersion = requireOption(options, "candidate_version");
+  const apiDigest = requireDigest(requireOption(options, "api_digest"), "api digest");
+  const webDigest = requireDigest(requireOption(options, "web_digest"), "web digest");
+
+  resolvePublicTag(options, apiImage, candidateVersion, apiDigest);
+  resolvePublicTag(options, webImage, candidateVersion, webDigest);
+  inspectPublicDigest(options, apiImage, apiDigest);
+  inspectPublicDigest(options, webImage, webDigest);
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.command === "verify-staging") {
@@ -152,6 +182,10 @@ async function main() {
   }
   if (options.command === "promote") {
     promote(options);
+    return;
+  }
+  if (options.command === "verify-public") {
+    verifyPublic(options);
     return;
   }
   fail(`unknown command: ${options.command}`);

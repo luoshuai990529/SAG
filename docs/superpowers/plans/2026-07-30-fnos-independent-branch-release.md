@@ -4,7 +4,7 @@
 
 **Goal:** Publish SAG `1.4.0-fnos.1` from the permanent `feat/fnos-docker-app` branch as public multi-platform GHCR images, build a digest-pinned `.fpk`, and validate it on the x86-64 fnOS VM without changing `main`.
 
-**Architecture:** Normal pushes run CI directly on the permanent fnOS branch. An immutable Tag formed as `fnos-candidate-${version}-${revision:0:12}` and pointing at the exact remote branch HEAD triggers the only package-writing workflow; that workflow validates the Tag before registry writes, publishes staging indexes, smokes captured digests, promotes immutable candidate references, makes both packages public, and proves anonymous access. The Mac then builds the `.fpk` from the captured API/Web digests and the reviewed Nginx digest before device lifecycle validation.
+**Architecture:** Normal pushes run CI directly on the permanent fnOS branch. An immutable Tag formed as `fnos-candidate-${version}-${revision:0:12}` and pointing at the exact remote branch HEAD triggers the only package-writing workflow; that workflow validates the Tag before registry writes, publishes staging indexes, smokes captured digests, promotes immutable candidate references, and proves anonymous access. Because GitHub's official Packages REST API does not expose personal-package visibility changes, the maintainer performs the one-time Public setting in GitHub Package Settings after first publication. The Mac then builds the `.fpk` from the captured API/Web digests and the reviewed Nginx digest before device lifecycle validation.
 
 **Tech Stack:** GitHub Actions, Node.js `node:test`, Docker Buildx, GHCR, fnpack 1.2.3, fnOS Docker Compose application packaging.
 
@@ -17,7 +17,7 @@
 - The fnOS application exposes only port `3080`; API port `8000` and Web port `3000` remain internal.
 - Final Compose images use manifest-list digests; `latest`, mutable image references, and `build:` are forbidden.
 - API and Web publish `linux/amd64,linux/arm64`; the candidate `.fpk` declares only `platform=x86`.
-- Normal CI has no package-write permission; only staging, promotion, and package-visibility jobs may request the minimum package-write permission.
+- Normal CI has no package-write permission; only staging and promotion jobs may request the minimum package-write permission.
 - Model credentials, GHCR credentials, and user data must not enter Git, Actions artifacts, logs, or `.fpk` content.
 - `origin/main` must remain at its observed baseline unless changed externally; this work must not push or merge it.
 
@@ -109,7 +109,7 @@ git add .github/workflows/ci.yml .github/workflows/fnos-image-release.yml script
 git commit -m "ci: release fnOS candidates from dedicated branch"
 ```
 
-### Task 2: Publish packages publicly and prove anonymous digest access
+### Task 2: Prove public anonymous digest access
 
 **Files:**
 - Modify: `.github/workflows/fnos-image-release.yml`
@@ -119,17 +119,17 @@ git commit -m "ci: release fnOS candidates from dedicated branch"
 
 **Interfaces:**
 - Consumes: `candidate.version`, `candidate.revision`, `inspect-staging.api_digest`, and `inspect-staging.web_digest`.
-- Produces: an anonymous postcheck that validates candidate tags and exact API/Web digest indexes without `docker/login-action`.
+- Produces: an anonymous postcheck that validates candidate tags and exact API/Web digest indexes without `docker/login-action`; first-publication visibility remains an explicit one-time GitHub Package Settings operation.
 
 - [ ] **Step 1: Write failing public-access tests**
 
 Add workflow assertions proving:
 
 ```js
-assert.match(job(workflow, "publicize"), /packages: write/);
-assert.match(job(workflow, "anonymous-postcheck"), /needs: \[candidate, inspect-staging, publicize\]/);
+assert.match(job(workflow, "anonymous-postcheck"), /needs: \[candidate, inspect-staging, promote\]/);
 assert.doesNotMatch(job(workflow, "anonymous-postcheck"), /docker\/login-action|GITHUB_TOKEN/);
 assert.match(job(workflow, "anonymous-postcheck"), /fnos-release-registry\.mjs verify-public/);
+assert.doesNotMatch(workflow, /visibility=public|--method PATCH/);
 ```
 
 Add registry helper tests whose fake Docker proves `verify-public`:
@@ -147,9 +147,9 @@ Run:
 node --test scripts/tests/fnos-release-workflow.test.mjs scripts/tests/fnos-release-registry.test.mjs
 ```
 
-Expected: failure because `publicize`, `anonymous-postcheck`, and `verify-public` do not exist.
+Expected: failure because `anonymous-postcheck` and `verify-public` do not exist.
 
-- [ ] **Step 3: Implement public visibility and anonymous verification**
+- [ ] **Step 3: Implement anonymous verification**
 
 Add `verify-public` to `scripts/fnos-release-registry.mjs` with required arguments:
 
@@ -164,14 +164,7 @@ Add `verify-public` to `scripts/fnos-release-registry.mjs` with required argumen
 
 It must reuse exact digest parsing and multi-platform index validation, inspect the candidate tags before exact digests, and fail closed for every registry error.
 
-Add a `publicize` job after `promote` that uses the GitHub REST API with `GITHUB_TOKEN` to set both user-owned container packages to Public:
-
-```bash
-gh api --method PATCH /user/packages/container/sag-api -f visibility=public
-gh api --method PATCH /user/packages/container/sag-web -f visibility=public
-```
-
-Add `anonymous-postcheck` after `publicize`; do not log in to GHCR and call `verify-public` with the captured digests.
+Add `anonymous-postcheck` after `promote`; do not log in to GHCR and call `verify-public` with the captured digests. Document that the first run is expected to fail while the new packages are Private, then the maintainer must set both packages to Public in GitHub Package Settings and rerun the failed job. Do not call an undocumented visibility API.
 
 - [ ] **Step 4: Run focused tests and verify pass**
 
@@ -238,7 +231,7 @@ git tag "fnos-candidate-1.4.0-fnos.1-$(git rev-parse --short=12 HEAD)"
 git push origin "fnos-candidate-1.4.0-fnos.1-$(git rev-parse --short=12 HEAD)"
 ```
 
-Explain that the Tag is created only after remote dedicated-branch CI succeeds, PR #1 is closed without merge, `main` remains untouched, package visibility is automated, anonymous checks are mandatory, and the `verified-digests` artifact feeds the FPK builder. Mark GHCR/FPK/device rows as pending until real external evidence exists.
+Explain that the Tag is created only after remote dedicated-branch CI succeeds, PR #1 is closed without merge, `main` remains untouched, first-publication visibility is a one-time GitHub Package Settings operation, anonymous checks are mandatory, and the `verified-digests` artifact feeds the FPK builder. Mark GHCR/FPK/device rows as pending until real external evidence exists.
 
 - [ ] **Step 4: Run documentation and release-safety tests**
 
@@ -321,7 +314,7 @@ Expected: one candidate workflow run starts from that exact Tag.
 
 - [ ] **Step 6: Wait for candidate images and capture evidence**
 
-Confirm every job succeeds, download `fnos-verified-digests-*`, verify the API/Web digest format, and anonymously run:
+After the first publication, set both Packages to Public in GitHub Package Settings if needed and rerun the failed anonymous job. Confirm every job succeeds, download `fnos-verified-digests-*`, verify the API/Web digest format, and anonymously run:
 
 ```bash
 docker buildx imagetools inspect ghcr.io/luoshuai990529/sag-api:1.4.0-fnos.1

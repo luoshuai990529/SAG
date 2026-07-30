@@ -39,6 +39,7 @@ test("dedicated fnOS branch CI and immutable candidate tag gate release writes",
     "inspect-staging",
     "smoke-staging",
     "promote",
+    "anonymous-postcheck",
   ]) {
     const releaseJob = job(workflow, name);
     assert.match(releaseJob, /needs(?:\.candidate|: [^\n]*candidate)/);
@@ -62,9 +63,24 @@ test("fnOS release workflow pins actions and scopes package permissions", async 
   assert.doesNotMatch(job(workflow, "local-amd64-smoke"), /packages: write/);
   assert.match(job(workflow, "inspect-staging"), /permissions:\n      contents: read\n      packages: read/);
   assert.match(job(workflow, "smoke-staging"), /permissions:\n      contents: read\n      packages: read/);
+  assert.match(job(workflow, "anonymous-postcheck"), /permissions:\n      contents: read/);
+  assert.doesNotMatch(job(workflow, "anonymous-postcheck"), /packages:|GITHUB_TOKEN|docker\/login-action/);
   for (const name of ["staging", "promote"]) {
     assert.match(job(workflow, name), /permissions:\n      contents: read\n      packages: write/);
   }
+  assert.doesNotMatch(workflow, /visibility=public|--method PATCH/);
+});
+
+test("promotion is followed by an unauthenticated exact-digest public check", async () => {
+  const workflow = await readFile(workflowPath, "utf8");
+  const postcheck = job(workflow, "anonymous-postcheck");
+
+  assert.match(postcheck, /needs: \[candidate, inspect-staging, promote\]/);
+  assert.match(postcheck, /fnos-release-registry\.mjs verify-public/);
+  assert.match(postcheck, /--candidate-version "\$CANDIDATE_VERSION"/);
+  assert.match(postcheck, /--api-digest "\$API_DIGEST"/);
+  assert.match(postcheck, /--web-digest "\$WEB_DIGEST"/);
+  assert.doesNotMatch(postcheck, /docker\/login-action|username:|password:|GITHUB_TOKEN|packages: read/);
 });
 
 test("promotion requires an exact captured-digest runtime smoke", async () => {

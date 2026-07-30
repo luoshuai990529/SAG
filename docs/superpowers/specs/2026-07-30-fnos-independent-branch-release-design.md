@@ -68,8 +68,12 @@ PR #1 关闭但不删除分支，不创建面向 `main` 的替代 PR。后续开
 7. 使用捕获的精确 `image@digest` 在独立 job 中再次运行 amd64 认证和 Web 冒烟；
 8. 以对账方式创建或确认 `1.4.0-fnos.1` 与 `sha-<commit>` 标签，若同名标签指向
    不同 digest 则失败；
-9. 将 `sag-api`、`sag-web` Packages 设为 Public；
-10. 在不登录 GHCR 的 job 中匿名检查候选标签与精确 digest，私有或不一致均失败。
+9. 首次发布后，由维护者在 GitHub Package Settings 中一次性将 `sag-api`、
+   `sag-web` 设为 Public；GitHub 官方 Packages REST API 不提供修改个人账户 Package
+   可见性的接口，因此不得调用未公开接口自动修改；
+10. 在不登录 GHCR 的 job 中匿名检查候选标签与精确 digest，私有或不一致均失败；
+    首次运行因 Package 尚为 Private 而失败时，完成上述一次性页面操作后重新运行失败
+    job，后续候选版本不再需要重复修改可见性。
 
 Tag 只负责触发发布；`.fpk` 永远使用 digest，不依赖 Tag 的长期可变性。
 
@@ -108,7 +112,7 @@ Mac 使用官方 `fnpack 1.2.3` 和 `scripts/build-fnos-package.mjs` 构建：
 - staging 后失败：保留唯一 staging Tag 作为审计证据，不提升候选标签；
 - 部分最终标签已创建：重跑只补齐缺失且 digest 一致的标签；
 - 同名最终标签 digest 冲突：失败闭锁，禁止覆盖；
-- Package 无法公开或匿名拉取：不得构建或安装正式 `.fpk`；
+- Package 无法通过 GitHub 页面公开或匿名拉取：不得构建或安装正式 `.fpk`；
 - fnOS 安装失败：保留 `.fpk`、digest、SHA-256 和脱敏设备日志，不把本地结构包冒充
   设备验收结果。
 

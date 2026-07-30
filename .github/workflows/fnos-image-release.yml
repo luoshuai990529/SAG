@@ -347,3 +347,30 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/fnos-release-registry.mjs promote --docker docker --api-image ghcr.io/luoshuai990529/sag-api --web-image ghcr.io/luoshuai990529/sag-web --candidate-version "$CANDIDATE_VERSION" --commit-tag "$COMMIT_TAG" --api-digest "$API_DIGEST" --web-digest "$WEB_DIGEST"
+
+  anonymous-postcheck:
+    name: Verify public candidate tags and exact digests anonymously
+    needs: [candidate, inspect-staging, promote]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_VERSION: ${{ needs.candidate.outputs.version }}
+      API_DIGEST: ${{ needs.inspect-staging.outputs.api_digest }}
+      WEB_DIGEST: ${{ needs.inspect-staging.outputs.web_digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
+      - name: Resolve public tags and indexes without registry credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/fnos-release-registry.mjs verify-public \
+            --docker docker \
+            --api-image ghcr.io/luoshuai990529/sag-api \
+            --web-image ghcr.io/luoshuai990529/sag-web \
+            --candidate-version "$CANDIDATE_VERSION" \
+            --api-digest "$API_DIGEST" \
+            --web-digest "$WEB_DIGEST"

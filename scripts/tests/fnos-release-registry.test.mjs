@@ -20,7 +20,7 @@ async function fakeDocker(t, state = {}) {
   t.after(async () => rm(root, { recursive: true, force: true }));
   const executable = path.join(root, "docker");
   const statePath = path.join(root, "state.json");
-  await writeFile(statePath, JSON.stringify({ refs: {}, errors: {}, log: [], ...state }));
+  await writeFile(statePath, JSON.stringify({ refs: {}, errors: {}, raw: {}, log: [], ...state }));
   await writeFile(executable, `#!/usr/bin/env node
 const fs = require("node:fs");
 const statePath = process.env.FAKE_DOCKER_STATE;
@@ -37,10 +37,12 @@ if (args.slice(0, 5).join(" ") === "buildx imagetools inspect --format {{.Manife
   process.stderr.write("ERROR: " + ref + ": not found\\n"); save(); process.exit(1);
 }
 if (args.slice(0, 4).join(" ") === "buildx imagetools inspect --raw") {
-  process.stdout.write(JSON.stringify({ mediaType: "application/vnd.oci.image.index.v1+json", manifests: [
+  const ref = args[4];
+  const index = state.raw[ref] || { mediaType: "application/vnd.oci.image.index.v1+json", manifests: [
     { platform: { os: "linux", architecture: "amd64" } },
     { platform: { os: "linux", architecture: "arm64" } },
-  ] }) + "\\n"); save(); process.exit(0);
+  ] };
+  process.stdout.write(JSON.stringify(index) + "\\n"); save(); process.exit(0);
 }
 if (args.slice(0, 3).join(" ") === "pull --platform linux/amd64") {
   process.stdout.write("pull progress that must not contaminate a digest\\n"); save(); process.exit(0);
@@ -74,6 +76,10 @@ async function stateOf(statePath) {
 
 function promoteArgs(docker) {
   return ["promote", "--docker", docker, "--api-image", api, "--web-image", web, "--candidate-version", version, "--commit-tag", commit, "--api-digest", digestA, "--web-digest", digestB];
+}
+
+function verifyPublicArgs(docker) {
+  return ["verify-public", "--docker", docker, "--api-image", api, "--web-image", web, "--candidate-version", version, "--api-digest", digestA, "--web-digest", digestB];
 }
 
 test("staging verification emits only a digest despite docker pull stdout and writes exact JSON/job outputs", async (t) => {
@@ -142,4 +148,59 @@ test("partial promotion retry fills only absent references", async (t) => {
   assert.equal(result.status, 0, result.stderr);
   const creates = (await stateOf(fake.statePath)).log.filter((args) => args.slice(0, 4).join(" ") === "buildx imagetools create --tag");
   assert.deepEqual(creates.map((args) => args[4]), [`${web}:${commit}`]);
+});
+
+test("anonymous verification checks candidate tags and exact multi-platform digests", async (t) => {
+  const fake = await fakeDocker(t, {
+    refs: { [`${api}:${version}`]: digestA, [`${web}:${version}`]: digestB },
+  });
+  const result = run(verifyPublicArgs(fake.executable), fake.env);
+
+  assert.equal(result.status, 0, result.stderr);
+  const log = (await stateOf(fake.statePath)).log;
+  assert.deepEqual(
+    log.filter((args) => args.slice(0, 5).join(" ") === "buildx imagetools inspect --format {{.Manifest.Digest}}").map((args) => args[5]),
+    [`${api}:${version}`, `${web}:${version}`],
+  );
+  assert.deepEqual(
+    log.filter((args) => args.slice(0, 4).join(" ") === "buildx imagetools inspect --raw").map((args) => args[4]),
+    [`${api}@${digestA}`, `${web}@${digestB}`],
+  );
+});
+
+test("anonymous verification fails when a public candidate tag has a different digest", async (t) => {
+  const fake = await fakeDocker(t, {
+    refs: { [`${api}:${version}`]: digestB, [`${web}:${version}`]: digestB },
+  });
+  const result = run(verifyPublicArgs(fake.executable), fake.env);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /does not resolve to the captured digest/i);
+});
+
+test("anonymous verification fails closed when GHCR requires authentication", async (t) => {
+  const fake = await fakeDocker(t, {
+    errors: { [`${api}:${version}`]: "ERROR: unauthorized: authentication required" },
+  });
+  const result = run(verifyPublicArgs(fake.executable), fake.env);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /could not anonymously resolve/i);
+});
+
+test("anonymous verification rejects an exact digest missing linux arm64", async (t) => {
+  const apiReference = `${api}@${digestA}`;
+  const fake = await fakeDocker(t, {
+    refs: { [`${api}:${version}`]: digestA, [`${web}:${version}`]: digestB },
+    raw: {
+      [apiReference]: {
+        mediaType: "application/vnd.oci.image.index.v1+json",
+        manifests: [{ platform: { os: "linux", architecture: "amd64" } }],
+      },
+    },
+  });
+  const result = run(verifyPublicArgs(fake.executable), fake.env);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /missing linux\/arm64/i);
 });
