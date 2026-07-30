@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { lstatSync, realpathSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -63,6 +64,43 @@ function parseArgs(argv) {
   return result;
 }
 
+function canonicalStructuralDestination(value) {
+  const output = path.resolve(value);
+  try {
+    lstatSync(output);
+    fail("--structural-test output must not already exist");
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  const parent = path.dirname(output);
+  let parentStat;
+  try {
+    parentStat = lstatSync(parent);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      fail("--structural-test output parent must already exist");
+    }
+    throw error;
+  }
+  if (parentStat.isSymbolicLink()) {
+    fail("--structural-test output parent must not be a symbolic link");
+  }
+  if (!parentStat.isDirectory()) {
+    fail("--structural-test output parent must be a directory");
+  }
+
+  const temp = realpathSync(os.tmpdir());
+  const canonicalParent = realpathSync(parent);
+  if (
+    canonicalParent !== temp
+    && !canonicalParent.startsWith(`${temp}${path.sep}`)
+  ) {
+    fail("--structural-test output must stay in the operating-system temporary directory");
+  }
+  return path.join(canonicalParent, path.basename(output));
+}
+
 function validateInputs(options, gatewayPolicy) {
   for (const name of ["api", "web", "nginx"]) {
     const value = options[name];
@@ -88,11 +126,8 @@ function validateInputs(options, gatewayPolicy) {
     fail("--render-output is available only with --structural-test");
   }
   if (options.structuralTest) {
-    const output = path.resolve(options.output || options.renderOutput);
-    const temp = path.resolve(os.tmpdir());
-    if (output !== temp && !output.startsWith(`${temp}${path.sep}`)) {
-      fail("--structural-test output must stay in the operating-system temporary directory");
-    }
+    const destination = options.output ? "output" : "renderOutput";
+    options[destination] = canonicalStructuralDestination(options[destination]);
   }
 }
 

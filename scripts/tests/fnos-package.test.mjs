@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -197,6 +208,21 @@ test("structural render output cannot escape the operating-system temp directory
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /temporary directory/i);
+});
+
+test("structural render output rejects a temp symlink that escapes the temp directory", async (t) => {
+  const root = await tempRoot(t);
+  const outside = await mkdtemp(path.join(repoRoot, ".fnos-render-escape-test-"));
+  t.after(async () => rm(outside, { recursive: true, force: true }));
+  await mkdir(path.join(outside, "nested"));
+  const link = path.join(root, "outside-link");
+  await symlink(outside, link, "dir");
+
+  const result = build(structuralRenderArgs(path.join(link, "nested", "rendered-sag")));
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /temporary directory/i);
+  await assert.rejects(access(path.join(outside, "nested", "rendered-sag")));
 });
 
 test("package build rejects simultaneous FPK and rendered-tree outputs", async (t) => {
