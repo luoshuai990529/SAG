@@ -1,8 +1,8 @@
 # SAG fnOS Docker 应用改造说明
 
-- 输出时间：2026-07-30 10:16:41 CST（Asia/Shanghai）
+- 输出时间：2026-07-30 10:48:07 CST（Asia/Shanghai）
 - 对应分支：`feat/fnos-docker-app`
-- 对应提交：`147c4810d81835035137290d863c49d57e23cd61`
+- 对应提交：`da34260946da30a5f8f37b3eddc9daf9c5ee9077`
 - 候选版本：`1.4.0-fnos.1`
 - 当前正式支持：x86-64 fnOS
 
@@ -56,8 +56,8 @@
 16. **Nginx 固定到经过策略校验和 Trivy 扫描的官方镜像 digest。**
     - 目的：阻断未经审核、过期或存在可修复 High/Critical 漏洞的网关镜像进入候选包。
 
-17. **修复 DataEngine 跨异步上下文启动与关闭导致 SQLite 连接未释放的问题。**
-    - 目的：避免测试或应用关闭阶段出现 `database is locked`，提高容器停止、重启和升级时的稳定性。
+17. **补充 DataEngine 的异步关闭和独立数据库连接池释放机制。**
+    - 目的：减少跨异步上下文切换时遗留 SQLite 连接，提高容器停止、重启和升级时的资源回收可靠性。
 
 18. **新增 Compose、生命周期、认证、打包、镜像发布、网关安全策略和运维文档的自动化回归测试。**
     - 目的：让端口、digest、密钥、备份顺序、路径权限和发布状态机等关键约束能够持续验证。
@@ -70,16 +70,16 @@
 
 ## 当前验证结果
 
-- API Ruff 与 pytest 已通过，pytest 结果为 `211 passed`。
+- API Ruff 已通过；本地 macOS 与 Linux ARM64 容器的 pytest 最近一次结果均为 `213 passed`。
 - Web 类型检查、Lint、单元测试和生产构建已通过。
 - fnOS Compose、生命周期、打包、发布与文档约束测试已通过。
-- GitHub PR 的 release-safety、backend 和 frontend 三组 CI 已通过。
+- GitHub PR 的 release-safety 和 frontend CI 已通过；backend 曾完整通过，但后续复跑在测试清理阶段复现一次 SQLite `database is locked`，稳定性修复与复验仍在进行中。
 - Mac 已验证能够访问 fnOS 管理端 `192.168.50.178:15666`，相关命令日志和截图已存入 `docs/fnos/evidence/2026-07-30/net-01/`。
 
 ## 尚未计入“已完成”的外部验收
 
 - API/Web 正式 GHCR 候选镜像及真实 manifest-list digest 尚未发布。
 - 使用真实 digest 构建的 `sag-1.4.0-fnos.1.fpk` 和 SHA-256 文件尚未生成。
+- Backend CI 偶发 SQLite 锁冲突尚未完成根因修复和连续复跑验证。
 - Windows VMware 的 `3080` NAT、防火墙和 fnOS VM 安装、启停、重启、升级、卸载验证尚未完成。
 - Markdown/PDF 上传、索引、检索、流式问答和引用打开仍需在 fnOS VM 中使用私下提供的模型凭据验收。
-
