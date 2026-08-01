@@ -25,3 +25,13 @@
 ## 验收边界
 
 此模式不提供账号隔离、密码认证或访问控制；能够访问 fnOS SAG 地址的客户端会共享同一个用户身份和同一份知识库数据，这是本版明确采用的产品行为。
+
+## 候选产物
+
+- 代码提交：`7c123b93ef4a81cec9ea2a61cf24e01d72a3c161`
+- 候选标签：`fnos-candidate-1.4.0-fnos.4-7c123b93ef4a`
+- GitHub Actions：`30710032562`（第 2 次运行通过；第 1 次因 Web arm64 构建运行器异常卡住而取消）
+- API 镜像：`ghcr.io/luoshuai990529/sag-api@sha256:d7321413fe91bb8862ea3f91a1d4255b5ab622822b3d10dc6efba9c42bb49e95`
+- Web 镜像：`ghcr.io/luoshuai990529/sag-web@sha256:66a70decbc71986054ce8c8dceda7517af8a02ac44be86385d0cdcb83d901298`
+- FPK：`dist/fnos/sag-1.4.0-fnos.4.fpk`
+- FPK SHA-256：`832f6c9d87b51348b1ecd81536de4e321b064ba7376ae385390e975193ad0511`
