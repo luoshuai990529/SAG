@@ -7,6 +7,11 @@ export interface User {
   created_at: string;
 }
 
+export interface SingleUserSession {
+  setup_required: boolean;
+  user: User | null;
+}
+
 export interface TokenResponse {
   access_token: string;
   token_type: string;

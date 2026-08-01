@@ -16,7 +16,6 @@ if (process.argv.length !== 3) {
 const composePath = path.resolve(process.cwd(), process.argv[2]);
 const immutableDigest = /@sha256:[a-f0-9]{64}$/i;
 const requiredSecretReference = /^\$\{SAG_SECRET_KEY:?\?[^}]*\}$/;
-const requiredBootstrapReference = /^\$\{SAG_AUTH_BOOTSTRAP_TOKEN:?\?[^}]*\}$/;
 const fnosSecretEnvFile = "${TRIM_PKGETC}/sag.env";
 
 function fail(messages) {
@@ -80,15 +79,12 @@ function validateApiSecret(api, errors) {
 }
 
 function validateApiAuth(api, errors) {
-  if (api.environment?.SAG_AUTH_MODE !== "password") {
-    errors.push("api must set SAG_AUTH_MODE=password for LAN-reachable production releases");
+  if (api.environment?.SAG_AUTH_MODE !== "single_user") {
+    errors.push("api must set SAG_AUTH_MODE=single_user for the fnOS no-auth release");
   }
-  const bootstrap = api.environment?.SAG_AUTH_BOOTSTRAP_TOKEN;
-  if (typeof bootstrap === "string" && requiredBootstrapReference.test(bootstrap)) return;
-  if (bootstrap === undefined && hasFnosSecretEnvFile(api)) return;
-  errors.push(
-    "api must use a required SAG_AUTH_BOOTSTRAP_TOKEN reference or the required fnOS sag.env",
-  );
+  if (api.environment?.SAG_AUTH_BOOTSTRAP_TOKEN !== undefined) {
+    errors.push("api must not define SAG_AUTH_BOOTSTRAP_TOKEN in single-user mode");
+  }
 }
 
 const expectedGatewayPort = "${TRIM_SERVICE_PORT}:80";

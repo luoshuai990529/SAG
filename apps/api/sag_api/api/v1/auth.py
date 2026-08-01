@@ -8,10 +8,29 @@ from sag_api.core.db import get_session
 from sag_api.core.deps import get_current_user
 from sag_api.core.security import create_access_token
 from sag_api.db.models import User
-from sag_api.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserOut
-from sag_api.services.auth_service import authenticate_or_register, register_user
+from sag_api.schemas.auth import (
+    LoginRequest,
+    RegisterRequest,
+    SingleUserSessionResponse,
+    SingleUserSetupRequest,
+    TokenResponse,
+    UserOut,
+)
+from sag_api.services.auth_service import (
+    authenticate_or_register,
+    get_single_user,
+    initialize_single_user,
+    register_user,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _single_user_response(user: User | None) -> SingleUserSessionResponse:
+    return SingleUserSessionResponse(
+        setup_required=user is None,
+        user=UserOut.model_validate(user) if user is not None else None,
+    )
 
 
 def _token_for(user: User) -> str:
@@ -50,3 +69,18 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user)) -> UserOut:
     return UserOut.model_validate(user)
+
+
+@router.get("/session", response_model=SingleUserSessionResponse)
+async def single_user_session(
+    session: AsyncSession = Depends(get_session),
+) -> SingleUserSessionResponse:
+    return _single_user_response(await get_single_user(session))
+
+
+@router.post("/session", response_model=SingleUserSessionResponse, status_code=201)
+async def initialize_single_user_session(
+    body: SingleUserSetupRequest,
+    session: AsyncSession = Depends(get_session),
+) -> SingleUserSessionResponse:
+    return _single_user_response(await initialize_single_user(session, name=body.name))

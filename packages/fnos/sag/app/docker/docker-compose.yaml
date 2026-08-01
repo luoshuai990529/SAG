@@ -24,7 +24,7 @@ services:
     environment:
       SAG_ENVIRONMENT: prod
       SAG_DEBUG: "false"
-      SAG_AUTH_MODE: password
+      SAG_AUTH_MODE: single_user
       SAG_CORS_ORIGINS: ""
       SAG_ALLOW_REGISTRATION: "false"
       SAG_DATABASE_URL: sqlite+aiosqlite:////data/sag.db
@@ -81,18 +81,6 @@ services:
     <<: *sag-lifecycle
     volumes:
       - "${TRIM_PKGVAR}/data:/data"
-      - "${TRIM_APPDEST}/docker/lifecycle.py:/opt/sag-lifecycle.py:ro"
-
-  lifecycle-auth-reset:
-    <<: *sag-lifecycle
-    volumes:
-      - "${TRIM_PKGVAR}/data:/data"
-      - "${TRIM_APPDEST}/docker/lifecycle.py:/opt/sag-lifecycle.py:ro"
-
-  lifecycle-auth-fsync:
-    <<: *sag-lifecycle
-    volumes:
-      - "${TRIM_PKGETC}:/config"
       - "${TRIM_APPDEST}/docker/lifecycle.py:/opt/sag-lifecycle.py:ro"
 
   web:

@@ -55,6 +55,17 @@ class LoginRequest(BaseModel):
         return v
 
 
+class SingleUserSetupRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("请填写称呼")
+        return v
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -62,6 +73,11 @@ class UserOut(BaseModel):
     email: str
     name: str
     created_at: datetime
+
+
+class SingleUserSessionResponse(BaseModel):
+    setup_required: bool
+    user: UserOut | None
 
 
 class TokenResponse(BaseModel):

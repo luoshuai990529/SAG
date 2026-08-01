@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import secrets
 import unicodedata
 
 from sqlalchemy import func, select, update
@@ -74,6 +75,37 @@ def _valid_new_password(password: str | None) -> bool:
 
 async def _first_user(session: AsyncSession) -> User | None:
     return await session.scalar(select(User).order_by(User.created_at.asc()).limit(1))
+
+
+async def get_single_user(session: AsyncSession) -> User | None:
+    """Return the one local workspace user without treating its name as a credential."""
+    return await _first_user(session)
+
+
+async def initialize_single_user(session: AsyncSession, *, name: str) -> User:
+    """Create the local workspace profile once, or return the profile another request created."""
+    existing = await _first_user(session)
+    if existing is not None:
+        return existing
+
+    user = User(
+        email="",
+        password_hash=await hash_password_async(secrets.token_urlsafe(32)),
+        password_initialized=False,
+        auth_singleton=1,
+        name=_normalized_name(name),
+    )
+    session.add(user)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        existing = await _first_user(session)
+        if existing is None:
+            raise
+        return existing
+    await session.refresh(user)
+    return user
 
 
 async def _commit_new_password_user(session: AsyncSession, user: User) -> User:

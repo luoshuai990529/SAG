@@ -100,27 +100,19 @@
   },
   "Login": {
     "hero": "Explore your knowledge universe",
-    "nameLabel": "Name",
+    "nameLabel": "What should we call you?",
     "namePlaceholder": "What should we call you?",
-    "passwordLabel": "Password",
-    "passwordPlaceholder": "12+ characters on fnOS; optional for local development",
-    "bootstrapLabel": "Setup key (optional)",
-    "bootstrapPlaceholder": "Only for first setup or an administrator reset",
-    "bootstrapHelp": "On first fnOS launch or after upgrading a legacy library, copy the setup key from the private sag.env. Leave it blank for later sign-ins.",
-    "submit": "Sign in",
-    "submitting": "Signing in",
-    "welcome": "Welcome back, {name}",
-    "failed": "Sign-in failed. Please try again later."
+    "submit": "Get started",
+    "submitting": "Setting things up",
+    "welcome": "Welcome, {name}",
+    "failed": "Setup failed. Please try again later."
   },
   "AccountSettings": {
     "identityTitle": "Local identity",
     "identityDescription": "The name used by the astronaut while navigating knowledge.",
     "nameMissing": "No name set",
     "emailMissing": "No email set",
-    "local": "Local",
-    "signOutTitle": "Sign out of this identity",
-    "signOutDescription": "Return to the launch page to confirm or switch your local identity.",
-    "signOut": "Return to launch page"
+    "local": "Local"
   },
   "DocumentStatus": {
     "pending": "Pending",
@@ -134,7 +126,6 @@
     "brandTagline": "Knowledge Agent",
     "localIdentity": "Local identity",
     "identitySettings": "Local identity settings",
-    "signOut": "Return to launch page",
     "archived": "Archived",
     "archiveFailed": "Failed to archive conversation",
     "loadMoreFailed": "Failed to load more conversations",

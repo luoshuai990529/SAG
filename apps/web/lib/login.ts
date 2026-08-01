@@ -4,6 +4,16 @@ export interface LoginRequest {
   bootstrap_token?: string;
 }
 
+export interface SingleUserSetupRequest {
+  name: string;
+}
+
+export function buildSingleUserSetupRequest(
+  name: string,
+): SingleUserSetupRequest {
+  return { name: name.trim() };
+}
+
 export function buildLoginRequest(
   name: string,
   password: string,

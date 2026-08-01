@@ -118,20 +118,17 @@ test("fnOS release workflow invokes the executable digest handoff and promotion 
   assert.match(workflow, /concurrency:\n  group: fnos-candidate-/);
 });
 
-test("amd64 smoke starts the API in password mode and exercises bootstrap plus daily login", async () => {
+test("amd64 smoke starts the API in no-auth single-user mode", async () => {
   const workflow = await readFile(workflowPath, "utf8");
   const smoke = job(workflow, "local-amd64-smoke");
 
-  assert.match(smoke, /--env SAG_AUTH_MODE=password/);
+  assert.match(smoke, /--env SAG_AUTH_MODE=single_user/);
   const sessionSecret = /--env SAG_SECRET_KEY=([a-f0-9]{64})/.exec(smoke)?.[1];
-  const bootstrap = /--env SAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})/.exec(smoke)?.[1];
   assert.ok(sessionSecret);
-  assert.ok(bootstrap);
-  assert.notEqual(sessionSecret, bootstrap);
-  assert.match(smoke, /\/api\/v1\/auth\/login/);
-  assert.match(smoke, /test "\$name_only_status" = 401/);
-  assert.match(smoke, /test "\$initialized_status" = 200/);
-  assert.match(smoke, /test "\$password_status" = 200/);
+  assert.doesNotMatch(smoke, /SAG_AUTH_BOOTSTRAP_TOKEN|bootstrap_token|password_status/);
+  assert.match(smoke, /\/api\/v1\/auth\/session/);
+  assert.match(smoke, /test "\$initialized_status" = 201/);
+  assert.match(smoke, /test "\$anonymous_status" = 200/);
 });
 
 test("gateway scan gates publication with a checksum-pinned Trivy binary and exact reviewed digest", async () => {

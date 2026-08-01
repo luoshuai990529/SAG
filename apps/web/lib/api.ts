@@ -18,6 +18,7 @@ import type {
   KnowledgeMcpDescriptor,
   Persona,
   SearchResponse,
+  SingleUserSession,
   Source,
   SourceGraphResponse,
   SourceMcpDescriptor,
@@ -413,6 +414,12 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
 
 export const api = {
   // auth / system
+  singleUserSession: () => request<SingleUserSession>("/api/v1/auth/session"),
+  initializeSingleUser: (name: string) =>
+    request<SingleUserSession>("/api/v1/auth/session", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
   register: (b: { email: string; password: string; name?: string }) =>
     request<TokenResponse>("/api/v1/auth/register", {
       method: "POST",

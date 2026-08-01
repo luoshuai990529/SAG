@@ -45,7 +45,7 @@ jobs:
           appname=$(awk -F= '/^appname[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2}' packages/fnos/sag/manifest)
           version=$(awk -F= '/^version[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2}' packages/fnos/sag/manifest)
           test "$appname" = "sag"
-          test "$version" = "1.4.0-fnos.3"
+          test "$version" = "1.4.0-fnos.4"
           expected_tag="fnos-candidate-${version}-${GITHUB_SHA:0:12}"
           test "$GITHUB_REF_NAME" = "$expected_tag"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
@@ -174,8 +174,7 @@ jobs:
             --env SAG_ENVIRONMENT=prod \
             --env SAG_DEBUG=false \
             --env SAG_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-            --env SAG_AUTH_MODE=password \
-            --env SAG_AUTH_BOOTSTRAP_TOKEN=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 \
+            --env SAG_AUTH_MODE=single_user \
             sag-api-smoke:"${{ needs.candidate.outputs.revision }}"
           docker run --detach --name sag-web-smoke --publish 13000:3000 sag-web-smoke:"${{ needs.candidate.outputs.revision }}"
           for attempt in {1..30}; do
@@ -183,21 +182,17 @@ jobs:
             sleep 2
             test "$attempt" -lt 30 || { docker logs sag-api-smoke; exit 1; }
           done
-          name_only_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-            --header 'Content-Type: application/json' \
-            --data '{"name":"Smoke Owner"}' \
-            http://127.0.0.1:18000/api/v1/auth/login)"
-          test "$name_only_status" = 401
+          empty_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            http://127.0.0.1:18000/api/v1/auth/session)"
+          test "$empty_status" = 200
           initialized_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
             --header 'Content-Type: application/json' \
-            --data '{"name":"Smoke Owner","password":"candidate password","bootstrap_token":"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"}' \
-            http://127.0.0.1:18000/api/v1/auth/login)"
-          test "$initialized_status" = 200
-          password_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-            --header 'Content-Type: application/json' \
-            --data '{"name":"Smoke Owner","password":"candidate password"}' \
-            http://127.0.0.1:18000/api/v1/auth/login)"
-          test "$password_status" = 200
+            --data '{"name":"Smoke Owner"}' \
+            http://127.0.0.1:18000/api/v1/auth/session)"
+          test "$initialized_status" = 201
+          anonymous_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            http://127.0.0.1:18000/api/v1/auth/me)"
+          test "$anonymous_status" = 200
           for attempt in {1..20}; do
             curl --fail --silent --show-error http://127.0.0.1:13000/ >/dev/null && break
             sleep 2

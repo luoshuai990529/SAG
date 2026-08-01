@@ -1,18 +1,16 @@
 "use client";
 
-import { LogOut } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { useApp } from "@/components/features/app-shell";
 import { ArchivedThreadsCard } from "@/components/features/archived-threads-card";
-import { SettingsRow, SettingsSection } from "@/components/features/settings-section";
+import { SettingsSection } from "@/components/features/settings-section";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 
 export function AccountSettings() {
   const t = useTranslations("AccountSettings");
-  const { user, logout } = useApp();
+  const { user } = useApp();
   const initial =
     user?.name.trim().slice(0, 1).toUpperCase() ||
     user?.email.trim().slice(0, 1).toUpperCase() ||
@@ -39,16 +37,6 @@ export function AccountSettings() {
             {t("local")}
           </Badge>
         </div>
-        <SettingsRow
-          title={t("signOutTitle")}
-          description={t("signOutDescription")}
-          layout="inline"
-        >
-          <Button variant="outline" size="sm" onClick={logout}>
-            <LogOut />
-            {t("signOut")}
-          </Button>
-        </SettingsRow>
       </SettingsSection>
 
       <ArchivedThreadsCard />

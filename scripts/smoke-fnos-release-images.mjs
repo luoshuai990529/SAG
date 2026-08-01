@@ -196,16 +196,16 @@ function requireWebRoot(options) {
     fail(`Web root must return exact HTTP 307 or 308, received ${response.status}`);
   }
   const locations = headerValues(response.headers, "Location");
-  if (locations.length !== 1) fail("Web root must return exactly one Location header normalized to /login");
-  if (locations[0] !== "/login") fail(`Web root raw Location must be exactly /login, received ${locations[0]}`);
+  if (locations.length !== 1) fail("Web root must return exactly one Location header normalized to /chat");
+  if (locations[0] !== "/chat") fail(`Web root raw Location must be exactly /chat, received ${locations[0]}`);
   let location;
   try {
     location = new URL(locations[0], url);
   } catch {
-    fail("Web root Location must normalize to /login");
+    fail("Web root Location must normalize to /chat");
   }
-  if (location.origin !== new URL(url).origin || `${location.pathname}${location.search}${location.hash}` !== "/login") {
-    fail(`Web root Location must normalize to /login, received ${locations[0]}`);
+  if (location.origin !== new URL(url).origin || `${location.pathname}${location.search}${location.hash}` !== "/chat") {
+    fail(`Web root Location must normalize to /chat, received ${locations[0]}`);
   }
 }
 
@@ -270,14 +270,17 @@ function requireWebStaticAsset(options, asset) {
   if (response.body.length === 0) fail("Web static asset body must be nonempty");
 }
 
-function loginStatus(options, body) {
+function sessionStatus(options, body) {
+  const data = body === undefined ? [] : [
+    "--header", "Content-Type: application/json",
+    "--data", JSON.stringify(body),
+  ];
   const result = curl(options, [
     "--silent", "--show-error", "--max-time", "10",
     "--output", "/dev/null", "--write-out", "%{http_code}",
-    "--header", "Content-Type: application/json",
-    "--data", JSON.stringify(body),
-    "http://127.0.0.1:18001/api/v1/auth/login",
-  ], "API login request");
+    ...data,
+    "http://127.0.0.1:18001/api/v1/auth/session",
+  ], "API single-user session request");
   return result.stdout.trim();
 }
 
@@ -288,8 +291,6 @@ async function smoke(options) {
   if (!webReference.test(webImage)) fail("--web-image must be the reviewed Web repository at an exact sha256 digest");
   const resource = names(options);
   const sessionSecret = randomBytes(32).toString("hex");
-  const bootstrapToken = randomBytes(32).toString("hex");
-  const password = `FnOS-smoke-${randomBytes(18).toString("base64url")}`;
   try {
     docker(options, ["pull", "--platform", "linux/amd64", apiImage], "exact API digest pull");
     docker(options, ["pull", "--platform", "linux/amd64", webImage], "exact Web digest pull");
@@ -301,8 +302,7 @@ async function smoke(options) {
       "--env", "SAG_ENVIRONMENT=prod",
       "--env", "SAG_DEBUG=false",
       "--env", `SAG_SECRET_KEY=${sessionSecret}`,
-      "--env", "SAG_AUTH_MODE=password",
-      "--env", `SAG_AUTH_BOOTSTRAP_TOKEN=${bootstrapToken}`,
+      "--env", "SAG_AUTH_MODE=single_user",
       "--env", "SAG_DATABASE_URL=sqlite+aiosqlite:////data/sag.db",
       "--env", "SAG_DATA_DIR=/data/engine",
       "--env", "SAG_UPLOAD_DIR=/data/uploads",
@@ -316,11 +316,10 @@ async function smoke(options) {
     const attemptsValue = options.readiness_attempts ?? "30";
     if (!/^[1-9]\d*$/.test(attemptsValue)) fail("--readiness-attempts must be a positive integer");
     await requireApiReady(options, Number(attemptsValue));
-    if (loginStatus(options, { name: "Digest Smoke Owner" }) !== "401") fail("name-only login must return 401 in password mode");
-    if (loginStatus(options, { name: "Digest Smoke Owner", password, bootstrap_token: bootstrapToken }) !== "200") {
-      fail("bootstrap initialization login must return 200");
+    if (sessionStatus(options) !== "200") fail("empty single-user session lookup must return 200");
+    if (sessionStatus(options, { name: "Digest Smoke Owner" }) !== "201") {
+      fail("single-user initialization must return 201");
     }
-    if (loginStatus(options, { name: "Digest Smoke Owner", password }) !== "200") fail("daily password login must return 200");
     requireWebRoot(options);
     requireWebLogin(options);
     requireWebStaticAsset(options, requireStaticAssetUrl(options));

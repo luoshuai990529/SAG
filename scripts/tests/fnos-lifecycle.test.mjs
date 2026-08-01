@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
+import { access, chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -307,346 +307,10 @@ test("container lifecycle helper rejects traversal and exclusive-create collisio
   assert.equal(await readFile(collision, "utf8"), "preserve-existing");
 });
 
-test("container lifecycle helper atomically revokes the sole password user", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-helper-auth-reset-"));
-  const data = path.join(root, "data");
-  const backup = path.join(root, "backup");
-  const database = path.join(data, "sag.db");
-  await mkdir(data, { recursive: true });
-  await mkdir(backup, { recursive: true });
-  t.after(async () => rm(root, { recursive: true, force: true }));
-
-  const created = spawnSync("python3", [
-    "-c",
-    [
-      "import sqlite3, sys",
-      "db = sqlite3.connect(sys.argv[1])",
-      "db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, password_initialized BOOLEAN NOT NULL, auth_version INTEGER NOT NULL)')",
-      "db.execute('INSERT INTO users VALUES (1, 1, 7)')",
-      "db.commit()",
-    ].join(";"),
-    database,
-  ], { encoding: "utf8" });
-  assert.equal(created.status, 0, created.stderr);
-
-  const reset = spawnSync("python3", [helperScript], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      SAG_DATA_ROOT: data,
-      SAG_BACKUP_ROOT: backup,
-      SAG_LIFECYCLE_ACTION: "auth-reset",
-    },
-  });
-  assert.equal(reset.status, 0, reset.stderr);
-  assert.equal(reset.stdout, "");
-  assert.equal(reset.stderr, "");
-
-  const queried = spawnSync("python3", [
-    "-c",
-    "import sqlite3,sys; print(*sqlite3.connect(sys.argv[1]).execute('SELECT password_initialized, auth_version FROM users').fetchone())",
-    database,
-  ], { encoding: "utf8" });
-  assert.equal(queried.status, 0, queried.stderr);
-  assert.equal(queried.stdout.trim(), "0 8");
-});
-
-test("container lifecycle helper refuses ambiguous users without changing any row", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-helper-auth-ambiguous-"));
-  const data = path.join(root, "data");
-  const backup = path.join(root, "backup");
-  const database = path.join(data, "sag.db");
-  await mkdir(data, { recursive: true });
-  await mkdir(backup, { recursive: true });
-  t.after(async () => rm(root, { recursive: true, force: true }));
-
-  const created = spawnSync("python3", [
-    "-c",
-    [
-      "import sqlite3, sys",
-      "db = sqlite3.connect(sys.argv[1])",
-      "db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, password_initialized BOOLEAN NOT NULL, auth_version INTEGER NOT NULL)')",
-      "db.executemany('INSERT INTO users VALUES (?, 1, ?)', [(1, 3), (2, 4)])",
-      "db.commit()",
-    ].join(";"),
-    database,
-  ], { encoding: "utf8" });
-  assert.equal(created.status, 0, created.stderr);
-
-  const reset = spawnSync("python3", [helperScript], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      SAG_DATA_ROOT: data,
-      SAG_BACKUP_ROOT: backup,
-      SAG_LIFECYCLE_ACTION: "auth-reset",
-    },
-  });
-  assert.notEqual(reset.status, 0);
-  assert.match(reset.stderr, /exactly one password user/i);
-
-  const queried = spawnSync("python3", [
-    "-c",
-    "import sqlite3,sys; print(list(sqlite3.connect(sys.argv[1]).execute('SELECT id, password_initialized, auth_version FROM users ORDER BY id')))",
-    database,
-  ], { encoding: "utf8" });
-  assert.equal(queried.status, 0, queried.stderr);
-  assert.equal(queried.stdout.trim(), "[(1, 1, 3), (2, 1, 4)]");
-});
-
-test("container lifecycle helper durably syncs the auth env file then its directory", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-helper-auth-fsync-"));
-  const config = path.join(root, "config");
-  await mkdir(config, { recursive: true });
-  await writeFile(path.join(config, "sag.env"), "protected\n", { mode: 0o600 });
-  t.after(async () => rm(root, { recursive: true, force: true }));
-
-  const real = spawnSync("python3", [helperScript], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      SAG_CONFIG_ROOT: config,
-      SAG_LIFECYCLE_ACTION: "auth-fsync",
-    },
-  });
-  assert.equal(real.status, 0, real.stderr);
-  assert.equal(real.stdout, "");
-
-  const probe = [
-    "import importlib.util, os, stat, sys",
-    "spec = importlib.util.spec_from_file_location('lifecycle', sys.argv[1])",
-    "module = importlib.util.module_from_spec(spec)",
-    "spec.loader.exec_module(module)",
-    "module.CONFIG_ROOT = module.Path(sys.argv[2])",
-    "failure = sys.argv[3]",
-    "calls = []",
-    "def injected_fsync(fd):",
-    "    kind = 'dir' if stat.S_ISDIR(os.fstat(fd).st_mode) else 'file'",
-    "    calls.append(kind)",
-    "    if kind == failure: raise OSError('injected fsync failure')",
-    "module.os.fsync = injected_fsync",
-    "try:",
-    "    module.fsync_auth_env()",
-    "except BaseException:",
-    "    print(','.join(calls))",
-    "    raise",
-    "print(','.join(calls))",
-  ].join("\n");
-
-  const successfulProbe = spawnSync(
-    "python3",
-    ["-c", probe, helperScript, config, "none"],
-    { encoding: "utf8" },
-  );
-  assert.equal(successfulProbe.status, 0, successfulProbe.stderr);
-  assert.equal(successfulProbe.stdout.trim(), "file,dir");
-
-  for (const [failure, expectedCalls] of [["file", "file"], ["dir", "file,dir"]]) {
-    const failed = spawnSync(
-      "python3",
-      ["-c", probe, helperScript, config, failure],
-      { encoding: "utf8" },
-    );
-    assert.notEqual(failed.status, 0);
-    assert.equal(failed.stdout.trim(), expectedCalls);
-  }
-});
-
-test("local auth reset inspects every project container twice and rotates only the bootstrap secret", async (t) => {
-  const fixture = await lifecycleFixture(t, {
-    COMPOSE_PROJECT_NAME: "hostile-project",
-    FAKE_REQUIRE_SAG_PROJECT: "1",
-    FAKE_COMPOSE_RUNNING_IDS: "",
-    FAKE_AUTH_CONTAINER_IDS: "auth-one\nauth-two",
-    FAKE_AUTH_INSPECT_SEQUENCE: "exited,created,exited,created",
-  });
-  const installed = runScript("install_callback", fixture.env);
-  assert.equal(installed.status, 0, installed.stderr);
-  const envFile = path.join(fixture.pkgEtc, "sag.env");
-  const before = await readFile(envFile, "utf8");
-  const [, sessionBefore, bootstrapBefore] = before.match(
-    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
-  );
-
-  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
-
-  assert.equal(result.status, 0, result.stderr);
-  const after = await readFile(envFile, "utf8");
-  const [, sessionAfter, bootstrapAfter] = after.match(
-    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
-  );
-  assert.equal(sessionAfter, sessionBefore);
-  assert.notEqual(bootstrapAfter, bootstrapBefore);
-  assert.notEqual(bootstrapAfter, sessionAfter);
-  assert.equal((await stat(envFile)).mode & 0o777, 0o600);
-  assert.match(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
-  const commands = await readFile(fixture.commandLog, "utf8");
-  assert.equal((commands.match(/docker compose --project-name sag -f .* ps -aq/g) || []).length, 2);
-  assert.equal((commands.match(/docker compose --project-name sag -f .* --profile lifecycle run/g) || []).length, 2);
-  assert.doesNotMatch(commands, /hostile-project/);
-  assert.equal((commands.match(/docker inspect .* auth-one/g) || []).length, 2);
-  assert.equal((commands.match(/docker inspect .* auth-two/g) || []).length, 2);
-  assert.ok(
-    commands.indexOf("SAG_LIFECYCLE_ACTION=auth-fsync")
-      < commands.indexOf("SAG_LIFECYCLE_ACTION=auth-reset"),
-  );
-  const observable = [
-    result.stdout,
-    result.stderr,
-    await readFile(fixture.tempLog, "utf8"),
-    await readFile(fixture.commandLog, "utf8"),
-  ].join("\n");
-  assert.doesNotMatch(observable, new RegExp(`${bootstrapBefore}|${bootstrapAfter}`));
-});
-
-for (const unsafeState of ["running", "paused", "restarting", "removing", "dead"]) {
-  test(`local auth reset rejects a project container in ${unsafeState} state`, async (t) => {
-    const fixture = await lifecycleFixture(t, {
-      FAKE_COMPOSE_RUNNING_IDS: "",
-      FAKE_AUTH_CONTAINER_STATE: unsafeState,
-    });
-    const installed = runScript("install_callback", fixture.env);
-    assert.equal(installed.status, 0, installed.stderr);
-    const envFile = path.join(fixture.pkgEtc, "sag.env");
-    const before = await readFile(envFile, "utf8");
-
-    const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
-
-    assert.notEqual(result.status, 0);
-    assert.equal(await readFile(envFile, "utf8"), before);
-    assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
-    assert.match(await readFile(fixture.tempLog, "utf8"), /not definitively stopped/i);
-  });
-}
-
-test("local auth reset fails closed when a project container cannot be inspected", async (t) => {
-  const fixture = await lifecycleFixture(t, {
-    FAKE_COMPOSE_RUNNING_IDS: "",
-    FAKE_AUTH_INSPECT_EXIT_ON: "1",
-  });
-  const installed = runScript("install_callback", fixture.env);
-  assert.equal(installed.status, 0, installed.stderr);
-  const envFile = path.join(fixture.pkgEtc, "sag.env");
-  const before = await readFile(envFile, "utf8");
-
-  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
-
-  assert.notEqual(result.status, 0);
-  assert.equal(await readFile(envFile, "utf8"), before);
-  assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
-  assert.match(await readFile(fixture.tempLog, "utf8"), /could not inspect/i);
-});
-
-test("local auth reset rechecks stopped state immediately before credential mutation", async (t) => {
-  const fixture = await lifecycleFixture(t, {
-    FAKE_COMPOSE_RUNNING_IDS: "",
-    FAKE_AUTH_INSPECT_SEQUENCE: "exited,restarting",
-  });
-  const installed = runScript("install_callback", fixture.env);
-  assert.equal(installed.status, 0, installed.stderr);
-  const envFile = path.join(fixture.pkgEtc, "sag.env");
-  const before = await readFile(envFile, "utf8");
-
-  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
-
-  assert.notEqual(result.status, 0);
-  assert.equal(await readFile(envFile, "utf8"), before);
-  assert.deepEqual(
-    (await readdir(fixture.pkgEtc)).filter((name) => name.startsWith("sag.env.reset.")),
-    [],
-  );
-  assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
-});
-
-test("local auth reset keeps the app stopped and reports unknown DB state on helper failure", async (t) => {
-  const fixture = await lifecycleFixture(t, {
-    FAKE_COMPOSE_RUNNING_IDS: "",
-    FAKE_AUTH_CONTAINER_STATE: "exited",
-    FAKE_HELPER_AUTH_RESET_EXIT: "7",
-  });
-  const installed = runScript("install_callback", fixture.env);
-  assert.equal(installed.status, 0, installed.stderr);
-  const envFile = path.join(fixture.pkgEtc, "sag.env");
-  const before = await readFile(envFile, "utf8");
-
-  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
-
-  assert.notEqual(result.status, 0);
-  const after = await readFile(envFile, "utf8");
-  const [, sessionBefore, bootstrapBefore] = before.match(
-    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
-  );
-  const [, sessionAfter, bootstrapAfter] = after.match(
-    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
-  );
-  assert.equal(sessionAfter, sessionBefore);
-  assert.notEqual(bootstrapAfter, bootstrapBefore);
-  assert.deepEqual(
-    (await readdir(fixture.pkgEtc)).filter((name) => name.startsWith("sag.env.reset.")),
-    [],
-  );
-  assert.match(await readFile(fixture.tempLog, "utf8"), /commit state is unknown/i);
-});
-
-test("local auth reset crash after env publish cannot restore the old bootstrap", async (t) => {
-  const fixture = await lifecycleFixture(t, {
-    FAKE_COMPOSE_RUNNING_IDS: "",
-    FAKE_AUTH_CONTAINER_STATE: "exited",
-    FAKE_HELPER_AUTH_RESET_KILL_PARENT: "1",
-  });
-  const installed = runScript("install_callback", fixture.env);
-  assert.equal(installed.status, 0, installed.stderr);
-  const envFile = path.join(fixture.pkgEtc, "sag.env");
-  const before = await readFile(envFile, "utf8");
-  const [, , bootstrapBefore] = before.match(
-    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
-  );
-
-  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
-
-  assert.equal(result.signal, "SIGKILL");
-  const after = await readFile(envFile, "utf8");
-  assert.doesNotMatch(after, new RegExp(bootstrapBefore));
-  assert.equal((await stat(envFile)).mode & 0o777, 0o600);
-});
-
-test("local auth reset does not touch the database if env publication fails", async (t) => {
-  const fixture = await lifecycleFixture(t, {
-    FAKE_COMPOSE_RUNNING_IDS: "",
-    FAKE_AUTH_CONTAINER_STATE: "exited",
-    FAKE_AUTH_MV_EXIT: "9",
-  });
-  const installed = runScript("install_callback", fixture.env);
-  assert.equal(installed.status, 0, installed.stderr);
-  const envFile = path.join(fixture.pkgEtc, "sag.env");
-  const before = await readFile(envFile, "utf8");
-
-  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
-
-  assert.notEqual(result.status, 0);
-  assert.equal(await readFile(envFile, "utf8"), before);
-  assert.doesNotMatch(await readFile(fixture.commandLog, "utf8"), /SAG_LIFECYCLE_ACTION=auth-reset/);
-});
-
-test("local auth reset aborts before the database when durable env sync fails", async (t) => {
-  const fixture = await lifecycleFixture(t, {
-    FAKE_COMPOSE_RUNNING_IDS: "",
-    FAKE_AUTH_CONTAINER_STATE: "exited",
-    FAKE_HELPER_AUTH_FSYNC_EXIT: "8",
-  });
-  const installed = runScript("install_callback", fixture.env);
-  assert.equal(installed.status, 0, installed.stderr);
-  const envFile = path.join(fixture.pkgEtc, "sag.env");
-  const before = await readFile(envFile, "utf8");
-
-  const result = runScript("auth_reset", fixture.env, ["--confirm-local-reset"]);
-
-  assert.notEqual(result.status, 0);
-  assert.notEqual(await readFile(envFile, "utf8"), before);
-  const commands = await readFile(fixture.commandLog, "utf8");
-  assert.match(commands, /SAG_LIFECYCLE_ACTION=auth-fsync/);
-  assert.doesNotMatch(commands, /SAG_LIFECYCLE_ACTION=auth-reset/);
-  assert.match(await readFile(fixture.tempLog, "utf8"), /durably sync/i);
+test("no-auth package omits password recovery lifecycle actions", async () => {
+  const helper = await readFile(helperScript, "utf8");
+  assert.doesNotMatch(helper, /auth-reset|auth-fsync|password_initialized/);
+  await assert.rejects(access(path.join(commandRoot, "auth_reset")));
 });
 
 test("container lifecycle helper cleans partial archives and preserves symlink semantics", async (t) => {
@@ -767,7 +431,7 @@ test("upgrade rejects a noncanonical package parent before Docker", async (t) =>
   assert.match(await readFile(fixture.tempLog, "utf8"), /unsafe.*package parent/i);
 });
 
-test("install creates private directories and idempotent independent mode-0600 secrets", async (t) => {
+test("install creates private directories and one idempotent mode-0600 internal secret", async (t) => {
   const fixture = await lifecycleFixture(t);
   const initialPkgEtcMode = (await stat(fixture.pkgEtc)).mode & 0o777;
   const initialPkgVarMode = (await stat(fixture.pkgVar)).mode & 0o777;
@@ -776,14 +440,8 @@ test("install creates private directories and idempotent independent mode-0600 s
   assert.equal(first.status, 0, first.stderr);
   const envFile = path.join(fixture.pkgEtc, "sag.env");
   const initial = await readFile(envFile, "utf8");
-  assert.match(
-    initial,
-    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
-  );
-  const [, sessionSecret, bootstrapToken] = initial.match(
-    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
-  );
-  assert.notEqual(sessionSecret, bootstrapToken);
+  assert.match(initial, /^SAG_SECRET_KEY=([a-f0-9]{64})\n$/);
+  assert.doesNotMatch(initial, /BOOTSTRAP|PASSWORD/);
   assert.equal((await stat(envFile)).mode & 0o777, 0o600);
   for (const directory of [path.join(fixture.pkgVar, "data"), path.join(fixture.pkgVar, "backup")]) {
     assert.equal((await stat(directory)).isDirectory(), true);
@@ -811,7 +469,7 @@ test("install_init prepares only the Compose env before the package variable dir
   const beforeCallback = await readFile(envFile, "utf8");
   assert.match(
     beforeCallback,
-    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
+    /^SAG_SECRET_KEY=([a-f0-9]{64})\n$/,
   );
   assert.equal((await stat(envFile)).mode & 0o777, 0o600);
 
@@ -869,7 +527,7 @@ test("install_init works from the pre-install cmd staging area before app payloa
   assert.equal(initialized.status, 0, initialized.stderr);
   assert.match(
     await readFile(path.join(fixture.pkgEtc, "sag.env"), "utf8"),
-    /^SAG_SECRET_KEY=([a-f0-9]{64})\nSAG_AUTH_BOOTSTRAP_TOKEN=([a-f0-9]{64})\n$/,
+    /^SAG_SECRET_KEY=([a-f0-9]{64})\n$/,
   );
 });
 
@@ -1023,7 +681,7 @@ test("install rejects a regular file as the platform configuration directory", a
   assert.equal(await readFile(filePath, "utf8"), "unchanged");
 });
 
-test("install atomically adds a bootstrap credential to a valid legacy env without rotating JWT sessions", async (t) => {
+test("install preserves a valid one-line internal secret", async (t) => {
   const fixture = await lifecycleFixture(t);
   const envFile = path.join(fixture.pkgEtc, "sag.env");
   const legacySecret = "a".repeat(64);
@@ -1033,28 +691,26 @@ test("install atomically adds a bootstrap credential to a valid legacy env witho
 
   assert.equal(result.status, 0, result.stderr);
   const upgraded = await readFile(envFile, "utf8");
-  assert.match(
-    upgraded,
-    new RegExp(`^SAG_SECRET_KEY=${legacySecret}\\nSAG_AUTH_BOOTSTRAP_TOKEN=[a-f0-9]{64}\\n$`),
-  );
+  assert.equal(upgraded, `SAG_SECRET_KEY=${legacySecret}\n`);
   assert.equal((await stat(envFile)).mode & 0o777, 0o600);
 });
 
-test("upgrade callback initializes auth secrets for a legacy passwordless installation", async (t) => {
+test("upgrade callback removes the obsolete bootstrap credential without rotating sessions", async (t) => {
   const fixture = await lifecycleFixture(t);
   const envFile = path.join(fixture.pkgEtc, "sag.env");
   const legacySecret = "e".repeat(64);
   await mkdir(path.join(fixture.pkgVar, "data"), { recursive: true });
   await mkdir(path.join(fixture.pkgVar, "backup"), { recursive: true });
-  await writeFile(envFile, `SAG_SECRET_KEY=${legacySecret}\n`, { mode: 0o600 });
+  await writeFile(
+    envFile,
+    `SAG_SECRET_KEY=${legacySecret}\nSAG_AUTH_BOOTSTRAP_TOKEN=${"b".repeat(64)}\n`,
+    { mode: 0o600 },
+  );
 
   const result = runScript("upgrade_callback", fixture.env);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(
-    await readFile(envFile, "utf8"),
-    new RegExp(`^SAG_SECRET_KEY=${legacySecret}\\nSAG_AUTH_BOOTSTRAP_TOKEN=[a-f0-9]{64}\\n$`),
-  );
+  assert.equal(await readFile(envFile, "utf8"), `SAG_SECRET_KEY=${legacySecret}\n`);
 });
 
 test("install accepts a trailing slash in TRIM_PKGVAR", async (t) => {

@@ -14,7 +14,7 @@ const apiImage = `ghcr.io/luoshuai990529/sag-api@${apiDigest}`;
 const webImage = `ghcr.io/luoshuai990529/sag-web@${webDigest}`;
 
 async function fakeTools(t, {
-  nameOnlyStatus = "401",
+  setupStatus = "201",
   dockerFail = "",
   readiness = {},
   rootResponse = {},
@@ -52,12 +52,13 @@ const args = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_CURL_LOG, JSON.stringify(args) + "\\n");
 const dataIndex = args.indexOf("--data");
 if (dataIndex >= 0) {
-  const body = JSON.parse(args[dataIndex + 1]);
-  process.stdout.write(body.password ? "200" : process.env.FAKE_NAME_ONLY_STATUS);
+  process.stdout.write(process.env.FAKE_SETUP_STATUS);
 } else {
   const responses = JSON.parse(process.env.FAKE_HTTP_RESPONSES);
   const url = args.at(-1);
-  const response = url.endsWith("/api/v1/system/ready")
+  const response = url.endsWith("/api/v1/auth/session") || url.endsWith("/api/v1/auth/me")
+    ? { status: 200, headers: "HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n", body: "{}", stderr: "", exitCode: 0 }
+    : url.endsWith("/api/v1/system/ready")
     ? responses.readiness
     : url.endsWith("/login") ? responses.login
       : url.includes("/_next/static/") ? responses.asset
@@ -82,7 +83,7 @@ process.exit(0);
     env: {
       FAKE_DOCKER_LOG: dockerLog,
       FAKE_CURL_LOG: curlLog,
-      FAKE_NAME_ONLY_STATUS: nameOnlyStatus,
+      FAKE_SETUP_STATUS: setupStatus,
       FAKE_DOCKER_FAIL: dockerFail,
       FAKE_STATIC_ASSET_OUTPUT: staticAssetOutput,
       FAKE_STATIC_ASSET_EXIT_CODE: String(staticAssetExitCode),
@@ -98,7 +99,7 @@ process.exit(0);
         },
         root: {
           status: 307,
-          headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login\r\n\r\n",
+          headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /chat\r\n\r\n",
           body: "",
           exitCode: 0,
           stderr: "",
@@ -141,7 +142,7 @@ async function jsonLines(file) {
   return (await readFile(file, "utf8")).trim().split("\n").filter(Boolean).map(JSON.parse);
 }
 
-test("smokes only the captured API/Web digest references with ephemeral password auth data", async (t) => {
+test("smokes only the captured API/Web digests in no-auth single-user mode", async (t) => {
   const tools = await fakeTools(t);
   const result = invoke(tools);
   assert.equal(result.status, 0, result.stderr);
@@ -158,13 +159,11 @@ test("smokes only the captured API/Web digest references with ephemeral password
   assert.equal(runs[1].at(-1), webImage);
   assert.deepEqual(runs[0].slice(1, 3), ["--platform", "linux/amd64"]);
   assert.deepEqual(runs[1].slice(1, 3), ["--platform", "linux/amd64"]);
-  assert.ok(runs[0].includes("SAG_AUTH_MODE=password"));
+  assert.ok(runs[0].includes("SAG_AUTH_MODE=single_user"));
   assert.ok(runs[0].includes("type=volume,source=sag-fnos-data-test-123,target=/data"));
   const secret = runs[0].find((value) => value.startsWith("SAG_SECRET_KEY="))?.split("=")[1];
-  const bootstrap = runs[0].find((value) => value.startsWith("SAG_AUTH_BOOTSTRAP_TOKEN="))?.split("=")[1];
   assert.match(secret ?? "", /^[a-f0-9]{64}$/);
-  assert.match(bootstrap ?? "", /^[a-f0-9]{64}$/);
-  assert.notEqual(secret, bootstrap);
+  assert.doesNotMatch(JSON.stringify(runs[0]), /SAG_AUTH_BOOTSTRAP_TOKEN/);
   assert.doesNotMatch(JSON.stringify(dockerCalls), /staging-fnos|sag-api-smoke|sag-web-smoke|buildx|build-push/);
   const execCalls = dockerCalls.filter(([command]) => command === "exec");
   assert.equal(execCalls.length, 1);
@@ -178,15 +177,13 @@ test("smokes only the captured API/Web digest references with ephemeral password
   assert.ok(curlCalls.some((args) => args.at(-1).endsWith("/")));
   assert.ok(curlCalls.some((args) => args.at(-1).endsWith("/login")));
   assert.ok(curlCalls.some((args) => args.at(-1) === "http://127.0.0.1:13001/_next/static/chunks/app.js"));
-  assert.ok(curlCalls.filter((args) => !args.includes("--data")).every(
+  assert.ok(curlCalls.filter((args) => (
+    !args.includes("--data") && !args.at(-1).includes("/api/v1/auth/")
+  )).every(
     (args) => args.includes("--dump-header") && !args.includes("--location"),
   ));
   const loginBodies = curlCalls.filter((args) => args.includes("--data")).map((args) => JSON.parse(args[args.indexOf("--data") + 1]));
-  assert.deepEqual(loginBodies.map((body) => Object.keys(body).sort()), [
-    ["name"],
-    ["bootstrap_token", "name", "password"],
-    ["name", "password"],
-  ]);
+  assert.deepEqual(loginBodies, [{ name: "Digest Smoke Owner" }]);
   assert.ok(dockerCalls.some((args) => args[0] === "rm" && args.includes("sag-fnos-api-test-123") && args.includes("sag-fnos-web-test-123")));
   assert.ok(dockerCalls.some((args) => args[0] === "volume" && args[1] === "rm" && args.includes("sag-fnos-data-test-123")));
   assert.equal((await readdir(tools.root)).filter((name) => name.startsWith("sag-fnos-http-")).length, 0);
@@ -216,17 +213,17 @@ for (const [name, readiness, message] of [
 }
 
 for (const [name, rootResponse, message] of [
-  ["arbitrary 302", { status: 302, headers: "HTTP/1.1 302 Found\r\nLocation: /login\r\n\r\n" }, /Web root.*307 or 308/i],
-  ["redirect loop", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /\r\n\r\n" }, /Location.*\/login/i],
-  ["wrong location", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /chat\r\n\r\n" }, /Location.*\/login/i],
-  ["empty query delimiter", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login?\r\n\r\n" }, /raw Location.*exactly \/login/i],
-  ["empty hash delimiter", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login#\r\n\r\n" }, /raw Location.*exactly \/login/i],
-  ["query hash delimiters", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login?#\r\n\r\n" }, /raw Location.*exactly \/login/i],
-  ["encoded path", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /%6cogin\r\n\r\n" }, /raw Location.*exactly \/login/i],
-  ["open redirect", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: //evil.example/login\r\n\r\n" }, /raw Location.*exactly \/login/i],
-  ["wrong host", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://evil.example/login\r\n\r\n" }, /raw Location.*exactly \/login/i],
+  ["arbitrary 302", { status: 302, headers: "HTTP/1.1 302 Found\r\nLocation: /chat\r\n\r\n" }, /Web root.*307 or 308/i],
+  ["redirect loop", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /\r\n\r\n" }, /Location.*\/chat/i],
+  ["wrong location", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login\r\n\r\n" }, /Location.*\/chat/i],
+  ["empty query delimiter", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /chat?\r\n\r\n" }, /raw Location.*exactly \/chat/i],
+  ["empty hash delimiter", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /chat#\r\n\r\n" }, /raw Location.*exactly \/chat/i],
+  ["query hash delimiters", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /chat?#\r\n\r\n" }, /raw Location.*exactly \/chat/i],
+  ["encoded path", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /%63hat\r\n\r\n" }, /raw Location.*exactly \/chat/i],
+  ["open redirect", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: //evil.example/chat\r\n\r\n" }, /raw Location.*exactly \/chat/i],
+  ["wrong host", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://evil.example/chat\r\n\r\n" }, /raw Location.*exactly \/chat/i],
   ["missing Location", { headers: "HTTP/1.1 307 Temporary Redirect\r\n\r\n" }, /exactly one Location/i],
-  ["duplicate Location", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /login\r\nLocation: /login\r\n\r\n" }, /exactly one Location/i],
+  ["duplicate Location", { headers: "HTTP/1.1 307 Temporary Redirect\r\nLocation: /chat\r\nLocation: /chat\r\n\r\n" }, /exactly one Location/i],
   ["curl exit", { exitCode: 7, stderr: "connection refused" }, /Web root request failed/i],
   ["unexpected 200", { status: 200, headers: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n", body: "<!doctype html>" }, /Web root.*307 or 308/i],
 ]) {
@@ -319,11 +316,11 @@ test("fails closed when an exact digest pull fails and still attempts cleanup", 
   assert.ok(dockerCalls.some((args) => args[0] === "volume" && args[1] === "rm"));
 });
 
-test("fails closed on incorrect name-only auth and still cleans containers and volume", async (t) => {
-  const tools = await fakeTools(t, { nameOnlyStatus: "200" });
+test("fails closed on rejected single-user initialization and still cleans resources", async (t) => {
+  const tools = await fakeTools(t, { setupStatus: "500" });
   const result = invoke(tools);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /name-only login.*401/i);
+  assert.match(result.stderr, /single-user initialization.*201/i);
   const dockerCalls = await jsonLines(tools.dockerLog);
   assert.ok(dockerCalls.some((args) => args[0] === "rm"));
   assert.ok(dockerCalls.some((args) => args[0] === "volume" && args[1] === "rm"));

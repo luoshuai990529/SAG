@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     secret_key: str = "dev-insecure-secret-change-me-in-production-0123456789"
     access_token_expire_minutes: int = 60 * 24 * 7  # 7 天
     # legacy 保留本地开发的名字即身份体验；password 用于 fnOS 等局域网生产部署。
-    auth_mode: Literal["legacy", "password"] = "legacy"
+    auth_mode: Literal["legacy", "password", "single_user"] = "legacy"
     # password 模式首次初始化/管理员重置所需，必须与 JWT secret 分离且不写日志。
     auth_bootstrap_token: SecretStr = SecretStr("")
     auth_password_min_length: int = Field(default=12, ge=12, le=128)

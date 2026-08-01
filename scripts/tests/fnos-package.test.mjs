@@ -88,7 +88,7 @@ async function fakeRegistry(t, {
       api: {
         image: `ghcr.io/luoshuai990529/sag-api@${digestA}`,
         env_file: [{ path: "${TRIM_PKGETC}/sag.env", required: true }],
-        environment: { SAG_AUTH_MODE: "password" },
+        environment: { SAG_AUTH_MODE: "single_user" },
       },
       web: { image: `ghcr.io/luoshuai990529/sag-web@${digestB}` },
       gateway: {
@@ -385,7 +385,6 @@ test("lifecycle scripts have valid Bash syntax and the official callback shape",
     "upgrade_callback",
     "uninstall_init",
     "uninstall_callback",
-    "auth_reset",
   ];
 
   for (const script of scripts) {
@@ -425,7 +424,8 @@ test("structural mode renders and validates the real package tree in every envir
   assert.doesNotMatch(compose, /__SAG_(?:API|WEB|NGINX)_IMAGE__/);
   assert.match(compose, /\$\{TRIM_SERVICE_PORT\}:80/);
   assert.match(compose, /\$\{TRIM_PKGETC\}\/sag\.env/);
-  assert.match(compose, /SAG_AUTH_MODE:\s*password/);
+  assert.match(compose, /SAG_AUTH_MODE:\s*single_user/);
+  assert.doesNotMatch(compose, /SAG_AUTH_BOOTSTRAP_TOKEN/);
   assert.match(compose, /\$\{TRIM_PKGVAR\}\/data:\/data/);
   assert.match(compose, /lifecycle-size:/);
   assert.match(compose, /profiles:\s*\["lifecycle"\]/);
@@ -441,8 +441,6 @@ test("structural mode renders and validates the real package tree in every envir
     "lifecycle-size": [["/data", true], ["/opt/sag-lifecycle.py", true]],
     "lifecycle-backup": [["/data", true], ["/backup", false], ["/opt/sag-lifecycle.py", true]],
     "lifecycle-delete": [["/data", false], ["/opt/sag-lifecycle.py", true]],
-    "lifecycle-auth-reset": [["/data", false], ["/opt/sag-lifecycle.py", true]],
-    "lifecycle-auth-fsync": [["/config", false], ["/opt/sag-lifecycle.py", true]],
   };
   for (const [name, mounts] of Object.entries(expectedMounts)) {
     const service = helperServices[name];

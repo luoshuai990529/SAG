@@ -13,8 +13,8 @@ const gatewayReference = "docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12
 function validCompose({
   api = "",
   apiSecret = "${SAG_SECRET_KEY:?set in the runtime environment}",
-  apiBootstrap = "${SAG_AUTH_BOOTSTRAP_TOKEN:?set in the runtime environment}",
-  apiAuthMode = "password",
+  apiBootstrap = null,
+  apiAuthMode = "single_user",
   apiEnvFile = "",
   web = "",
   gateway = "    ports:\n      - \"${TRIM_SERVICE_PORT}:80\"\n",
@@ -130,20 +130,20 @@ test("rejects a predictable 64-zero literal API secret", async (t) => {
   assert.match(result.stderr, /required SAG_SECRET_KEY/);
 });
 
-test("rejects a release Compose that leaves the legacy name-only auth mode enabled", async (t) => {
+test("rejects a release Compose that does not enable no-auth single-user mode", async (t) => {
   const compose = await fixture(t, validCompose({ apiAuthMode: "legacy" }));
   const result = validate(compose);
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /SAG_AUTH_MODE=password/);
+  assert.match(result.stderr, /SAG_AUTH_MODE=single_user/);
 });
 
-test("rejects a literal auth bootstrap credential", async (t) => {
+test("rejects any obsolete auth bootstrap credential", async (t) => {
   const compose = await fixture(t, validCompose({ apiBootstrap: `"${"b".repeat(64)}"` }));
   const result = validate(compose);
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /required SAG_AUTH_BOOTSTRAP_TOKEN/);
+  assert.match(result.stderr, /must not define SAG_AUTH_BOOTSTRAP_TOKEN/);
 });
 
 test("rejects an API host port", async (t) => {

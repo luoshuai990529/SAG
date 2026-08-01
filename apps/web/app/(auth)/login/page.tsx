@@ -7,9 +7,8 @@ import { ArrowRight, Github, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { api, ApiError } from "@/lib/api";
-import { setToken } from "@/lib/auth";
 import { PRODUCT_NAME } from "@/lib/branding";
-import { buildLoginRequest } from "@/lib/login";
+import { buildSingleUserSetupRequest } from "@/lib/login";
 import { LanguageToggle } from "@/components/features/language-toggle";
 import { ThemeToggle } from "@/components/features/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -21,9 +20,30 @@ export default function LaunchPage() {
   const t = useTranslations("Login");
   const router = useRouter();
   const [name, setName] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [bootstrapToken, setBootstrapToken] = React.useState("");
-  const [loading, setLoading] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+  const [setupRequired, setSetupRequired] = React.useState(false);
+
+  React.useEffect(() => {
+    let alive = true;
+    api.singleUserSession()
+      .then((session) => {
+        if (!alive) return;
+        if (session.setup_required) {
+          setSetupRequired(true);
+          setLoading(false);
+          return;
+        }
+        router.replace("/chat");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setSetupRequired(true);
+        setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [router]);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -31,11 +51,9 @@ export default function LaunchPage() {
     if (!nextName) return;
     setLoading(true);
     try {
-      const response = await api.login(
-        buildLoginRequest(nextName, password, bootstrapToken),
-      );
-      setToken(response.access_token);
-      toast.success(t("welcome", { name: response.user.name }));
+      const request = buildSingleUserSetupRequest(nextName);
+      const response = await api.initializeSingleUser(request.name);
+      toast.success(t("welcome", { name: response.user?.name ?? request.name }));
       router.replace("/chat");
     } catch (error) {
       const message = error instanceof ApiError ? error.message : t("failed");
@@ -75,7 +93,9 @@ export default function LaunchPage() {
             {t("hero")}
           </h1>
 
-          <form
+          {loading && !setupRequired ? (
+            <div className="mt-6 flex justify-center"><Spinner /></div>
+          ) : <form
             onSubmit={onSubmit}
             className="mt-6 flex flex-col gap-4 rounded-lg border bg-background/76 p-5 text-left shadow-lift backdrop-blur-xl"
           >
@@ -92,40 +112,6 @@ export default function LaunchPage() {
                 autoFocus
               />
             </Field>
-            <Field>
-              <FieldLabel htmlFor="password">{t("passwordLabel")}</FieldLabel>
-              <Input
-                id="password"
-                type="password"
-                minLength={12}
-                maxLength={128}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder={t("passwordPlaceholder")}
-                autoComplete="current-password"
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="bootstrap-token">
-                {t("bootstrapLabel")}
-              </FieldLabel>
-              <Input
-                id="bootstrap-token"
-                type="password"
-                maxLength={256}
-                value={bootstrapToken}
-                onChange={(event) => setBootstrapToken(event.target.value)}
-                placeholder={t("bootstrapPlaceholder")}
-                autoComplete="off"
-                aria-describedby="bootstrap-help"
-              />
-              <p
-                id="bootstrap-help"
-                className="text-xs leading-relaxed text-muted-foreground"
-              >
-                {t("bootstrapHelp")}
-              </p>
-            </Field>
             <Button
               type="submit"
               size="lg"
@@ -135,7 +121,7 @@ export default function LaunchPage() {
               {loading ? <Spinner /> : <ArrowRight className="size-4" />}
               {loading ? t("submitting") : t("submit")}
             </Button>
-          </form>
+          </form>}
         </div>
       </section>
     </main>
