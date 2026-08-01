@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sag_api.core.config import settings
 from sag_api.core.db import get_session
 from sag_api.core.deps import get_current_user
 from sag_api.core.security import create_access_token
@@ -13,10 +14,25 @@ from sag_api.services.auth_service import authenticate_or_register, register_use
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _token_for(user: User) -> str:
+    extra = (
+        {"auth_version": user.auth_version}
+        if settings.auth_mode == "password"
+        else None
+    )
+    return create_access_token(user.id, extra=extra)
+
+
 @router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(body: RegisterRequest, session: AsyncSession = Depends(get_session)) -> TokenResponse:
-    user = await register_user(session, email=body.email, password=body.password, name=body.name)
-    return TokenResponse(access_token=create_access_token(user.id), user=UserOut.model_validate(user))
+    user = await register_user(
+        session,
+        email=body.email,
+        password=body.password,
+        name=body.name,
+        bootstrap_token=body.bootstrap_token,
+    )
+    return TokenResponse(access_token=_token_for(user), user=UserOut.model_validate(user))
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -26,8 +42,9 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
         name=body.name,
         email=body.email,
         password=body.password,
+        bootstrap_token=body.bootstrap_token,
     )
-    return TokenResponse(access_token=create_access_token(user.id), user=UserOut.model_validate(user))
+    return TokenResponse(access_token=_token_for(user), user=UserOut.model_validate(user))
 
 
 @router.get("/me", response_model=UserOut)

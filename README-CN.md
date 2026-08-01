@@ -24,6 +24,15 @@
   基于 SOTA 的 SAG 架构，把分散的文档与数据变成可搜索、可关联、可追溯的知识。
 </p>
 
+> **⚠️ 本分支是 fnOS 专用维护线。**
+>
+> `feat/fnos-docker-app` 承载 SAG 的 fnOS Docker 应用适配：三容器部署（API + Web + Nginx 网关，统一走 `:3080`）、fnOS 生命周期钩子、首次管理员 Bootstrap Token 初始化、面向 `.fpk` 候选包的不可变 GHCR 镜像发布。
+>
+> - **不反向合回 `main`。** 主线功能单向流入本分支并经过 fnOS 专项回归，本分支绝不回合并到 `main`。
+> - **版本号** 采用 `1.4.0-fnos.N` 方案；已交付的 `.fpk` 版本不会被覆盖。
+> - **找上游 SAG？** 请查看 [`main`](https://github.com/luoshuai990529/SAG/tree/main) 分支。
+> - **fnOS 交付设计与证据** 见 [`docs/superpowers/specs/2026-07-31-fnos-iterative-candidate-delivery-design.md`](docs/superpowers/specs/2026-07-31-fnos-iterative-candidate-delivery-design.md) 与 `docs/fnos/evidence/`。
+
 https://github.com/user-attachments/assets/cae70570-3885-490f-9126-dea23dcb369c
 
 ## 目录

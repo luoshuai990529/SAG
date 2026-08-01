@@ -24,6 +24,15 @@
   Built on the state-of-the-art SAG architecture, it turns scattered documents and data into knowledge that is searchable, connected, and traceable.
 </p>
 
+> **⚠️ This branch is the dedicated fnOS maintenance line.**
+>
+> `feat/fnos-docker-app` carries the fnOS Docker application adaptation of SAG: three-container deployment (API + Web + Nginx gateway behind `:3080`), fnOS lifecycle hooks, Bootstrap Token first-admin initialization, and immutable GHCR image publishing for `.fpk` candidates.
+>
+> - **No reverse merges to `main`.** Mainline features flow one-way into this branch after fnOS-specific regression; this branch is never merged back.
+> - **Versioning** uses the `1.4.0-fnos.N` scheme; delivered `.fpk` versions are never overwritten.
+> - **Looking for upstream SAG?** See the [`main`](https://github.com/luoshuai990529/SAG/tree/main) branch.
+> - **fnOS delivery design and evidence** live under [`docs/superpowers/specs/2026-07-31-fnos-iterative-candidate-delivery-design.md`](docs/superpowers/specs/2026-07-31-fnos-iterative-candidate-delivery-design.md) and `docs/fnos/evidence/`.
+
 https://github.com/user-attachments/assets/9bb618e9-fef8-4d07-8a30-3f7d83beb0ff
 
 ## Contents
