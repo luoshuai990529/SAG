@@ -12,6 +12,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -21,6 +22,10 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const builder = path.join(repoRoot, "scripts/build-fnos-package.mjs");
 const validator = path.join(repoRoot, "scripts/validate-fnos-release.mjs");
 const sourcePackage = path.join(repoRoot, "packages/fnos/sag");
+const manifestText = readFileSync(path.join(sourcePackage, "manifest"), "utf8");
+const candidateVersion = manifestText.match(/^version\s*=\s*(\S+)\s*$/m)?.[1];
+if (!candidateVersion) throw new Error("packages/fnos/sag/manifest is missing a version line");
+const candidateVersionRegex = candidateVersion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const digestA = `sha256:${"a".repeat(64)}`;
 const digestB = `sha256:${"b".repeat(64)}`;
 const digestD = `sha256:${"d".repeat(64)}`;
@@ -104,8 +109,8 @@ if [[ "$1 $2 $3 \${4:-}" == "buildx imagetools inspect --raw" ]]; then
   esac
 elif [[ "$1 $2 $3 \${4:-} \${5:-}" == "buildx imagetools inspect --format {{.Manifest.Digest}}" ]]; then
   case "\${6:-}" in
-    ghcr.io/luoshuai990529/sag-api:1.4.0-fnos.1) printf '%s\\n' "$FAKE_API_TAG_DIGEST" ;;
-    ghcr.io/luoshuai990529/sag-web:1.4.0-fnos.1) printf '%s\\n' "$FAKE_WEB_TAG_DIGEST" ;;
+    ghcr.io/luoshuai990529/sag-api:${candidateVersion}) printf '%s\\n' "$FAKE_API_TAG_DIGEST" ;;
+    ghcr.io/luoshuai990529/sag-web:${candidateVersion}) printf '%s\\n' "$FAKE_WEB_TAG_DIGEST" ;;
     *) exit 8 ;;
   esac
 elif [[ "$1 $2" == "compose -f" ]]; then
@@ -174,7 +179,7 @@ function run(command, args, options = {}) {
 test("release build requires all three digest-pinned image references", async (t) => {
   const root = await tempRoot(t);
   const result = build([
-    "--api-image", "ghcr.io/luoshuai990529/sag-api:1.4.0-fnos.1",
+    "--api-image", `ghcr.io/luoshuai990529/sag-api:${candidateVersion}`,
     "--output", path.join(root, "candidate.fpk"),
   ]);
 
@@ -404,7 +409,7 @@ test("structural mode renders and validates the real package tree in every envir
   const manifest = await readFile(path.join(unpacked, "manifest"), "utf8");
   for (const expected of [
     /appname\s*=\s*sag/m,
-    /version\s*=\s*1\.4\.0-fnos\.1/m,
+    new RegExp(`^version\\s*=\\s*${candidateVersionRegex}$`, "m"),
     /platform\s*=\s*x86/m,
     /os_min_version\s*=\s*1\.2\.0302/m,
     /service_port\s*=\s*3080/m,

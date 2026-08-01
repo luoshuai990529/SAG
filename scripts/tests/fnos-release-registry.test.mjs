@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,7 +13,9 @@ const digestA = `sha256:${"a".repeat(64)}`;
 const digestB = `sha256:${"b".repeat(64)}`;
 const api = "ghcr.io/luoshuai990529/sag-api";
 const web = "ghcr.io/luoshuai990529/sag-web";
-const version = "1.4.0-fnos.1";
+const manifestText = readFileSync(path.join(repoRoot, "packages/fnos/sag/manifest"), "utf8");
+const version = manifestText.match(/^version\s*=\s*(\S+)\s*$/m)?.[1];
+if (!version) throw new Error("packages/fnos/sag/manifest is missing a version line");
 const commit = "sha-0123456789abcdef";
 
 async function fakeDocker(t, state = {}) {
