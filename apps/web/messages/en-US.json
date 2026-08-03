@@ -112,7 +112,10 @@
     "identityDescription": "The name used by the astronaut while navigating knowledge.",
     "nameMissing": "No name set",
     "emailMissing": "No email set",
-    "local": "Local"
+    "local": "Local",
+    "signOutTitle": "Sign out of this identity",
+    "signOutDescription": "Return to the launch page to confirm or switch your local identity.",
+    "signOut": "Return to launch page"
   },
   "DocumentStatus": {
     "pending": "Pending",
@@ -126,6 +129,7 @@
     "brandTagline": "Knowledge Agent",
     "localIdentity": "Local identity",
     "identitySettings": "Local identity settings",
+    "signOut": "Return to launch page",
     "archived": "Archived",
     "archiveFailed": "Failed to archive conversation",
     "loadMoreFailed": "Failed to load more conversations",
@@ -583,7 +587,8 @@
     "exitExploreShort": "Exit",
     "exploreEntered": "You have entered exploration mode",
     "exploreEnteredDescription": "Select a galaxy to explore. Use the button in the upper-right corner to exit.",
-    "resizeWindow": "Resize window"
+    "resizeWindow": "Resize window",
+    "logoutFailed": "Unable to return to the launch page. Please try again."
   },
   "ChatPage": {
     "suggestionSummary": "Summarize the most important knowledge in my library",
