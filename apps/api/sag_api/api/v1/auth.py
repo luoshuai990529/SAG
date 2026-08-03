@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sag_api.core.config import settings
@@ -21,6 +21,7 @@ from sag_api.services.auth_service import (
     get_single_user,
     initialize_single_user,
     register_user,
+    reset_single_user,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -84,3 +85,13 @@ async def initialize_single_user_session(
     session: AsyncSession = Depends(get_session),
 ) -> SingleUserSessionResponse:
     return _single_user_response(await initialize_single_user(session, name=body.name))
+
+
+@router.delete("/session", status_code=204)
+async def reset_single_user_session(
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    if settings.auth_mode != "single_user":
+        return Response(status_code=404)
+    await reset_single_user(session)
+    return Response(status_code=204)

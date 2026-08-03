@@ -167,6 +167,7 @@ interface AppCtx {
   enterExploreMode: (section?: WorkspaceSection) => void;
   exitExploreMode: () => void;
   openSettings: (tab?: SettingsTab, section?: string) => void;
+  logout: () => Promise<void>;
   refreshCapabilities: () => Promise<void>;
   timezone: string;
   updateTimezone: (timezone: string) => Promise<void>;
@@ -193,6 +194,7 @@ const AppContext = React.createContext<AppCtx>({
   enterExploreMode: () => {},
   exitExploreMode: () => {},
   openSettings: () => {},
+  logout: async () => {},
   refreshCapabilities: async () => {},
   timezone: DEFAULT_TIME_ZONE,
   updateTimezone: async () => {},
@@ -578,6 +580,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [enterExploreMode]);
 
+  const logout = React.useCallback(async () => {
+    try {
+      await api.resetSingleUser();
+      router.replace("/login");
+    } catch {
+      toast.error(t("logoutFailed"));
+    }
+  }, [router, t]);
+
   if (loading) return <FullLoader />;
   if (!user || !agent) return null;
 
@@ -604,6 +615,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         enterExploreMode,
         exitExploreMode,
         openSettings,
+        logout,
         refreshCapabilities,
         timezone,
         updateTimezone,

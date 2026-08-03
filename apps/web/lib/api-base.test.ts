@@ -8,6 +8,12 @@ async function attachmentUrl(): Promise<string> {
   return api.attachmentUrl("document-id");
 }
 
+async function resetSingleUser(): Promise<void> {
+  vi.resetModules();
+  const { api } = await import("./api");
+  return api.resetSingleUser();
+}
+
 afterEach(() => {
   if (originalApiBase === undefined) {
     delete process.env.NEXT_PUBLIC_API_BASE;
@@ -36,5 +42,18 @@ describe("resolveApiBase", () => {
     vi.stubGlobal("window", { location: { protocol: "http:", hostname: "192.168.1.42" } });
 
     expect(await attachmentUrl()).toBe("http://192.168.1.42:8000/api/v1/attachments/document-id");
+  });
+
+  it("resets the fnOS single-user session through the same-origin session endpoint", async () => {
+    process.env.NEXT_PUBLIC_API_BASE = "/";
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await resetSingleUser();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/auth/session",
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 });

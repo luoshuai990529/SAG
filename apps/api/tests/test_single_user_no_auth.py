@@ -57,6 +57,12 @@ async def test_single_user_mode_initializes_once_and_never_authenticates(
         invalid_bearer = await client.get(
             "/protected", headers={"Authorization": "Bearer definitely-not-a-jwt"}
         )
+        reset = await client.delete("/api/v1/auth/session")
+        after_reset = await client.get("/api/v1/auth/session")
+        protected_after_reset = await client.get("/protected")
+        reinitialized = await client.post(
+            "/api/v1/auth/session", json={"name": "Grace"}
+        )
 
     assert empty.status_code == 200
     assert empty.json() == {"setup_required": True, "user": None}
@@ -69,5 +75,11 @@ async def test_single_user_mode_initializes_once_and_never_authenticates(
     assert repeated_setup.json()["user"]["name"] == "Ada"
     assert anonymous.json() == {"id": created_user["id"], "name": "Ada"}
     assert invalid_bearer.json() == anonymous.json()
+    assert reset.status_code == 204
+    assert after_reset.json() == {"setup_required": True, "user": None}
+    assert protected_after_reset.status_code == 401
+    assert reinitialized.status_code == 201
+    assert reinitialized.json()["user"]["id"] == created_user["id"]
+    assert reinitialized.json()["user"]["name"] == "Grace"
 
     await engine.dispose()
