@@ -20,3 +20,9 @@
 - API：`uv run pytest tests/test_single_user_no_auth.py tests/test_hardening.py -q`。
 - Web：`npm run test:unit -- lib/api-base.test.ts lib/auth.test.ts`（6 项通过）。
 - fnOS：无登录边界、发布 Compose、镜像 smoke、发布工作流门禁测试通过。
+
+## 同步后全量验证
+
+- API：`uv run ruff check sag_api tests` 与 `uv run pytest tests -q` 通过；其中 PostgreSQL E2E 使用临时 pgvector PostgreSQL，修复前因缺少 `source_config` 失败，修复后通过。
+- Web：`npm run test:unit`（58 文件、396 用例）、`npm run lint`、`npm run typecheck` 与 `npm run build` 全部通过。
+- fnOS：认证边界、发布校验、镜像 smoke、生命周期与打包门禁测试全部通过；根 Compose 未同步上游的抽取并发默认值，包内仍固定为 2。

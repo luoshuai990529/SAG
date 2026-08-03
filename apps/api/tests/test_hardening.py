@@ -368,6 +368,9 @@ async def test_engine_starts_and_closes_in_the_same_async_context(monkeypatch):
         async def start(self):
             self.token = current_engine.set(self)
 
+        async def init_schema(self):
+            return None
+
         async def aclose(self):
             current_engine.reset(self.token)
             self.closed = True
