@@ -112,7 +112,10 @@
     "identityDescription": "宇航员在知识航行中使用的称呼。",
     "nameMissing": "未设置名称",
     "emailMissing": "未设置邮箱",
-    "local": "本机"
+    "local": "本机",
+    "signOutTitle": "退出当前身份",
+    "signOutDescription": "返回启动页，可重新确认或更换本地身份。",
+    "signOut": "退出到启动页"
   },
   "DocumentStatus": {
     "pending": "待处理",
@@ -126,6 +129,7 @@
     "brandTagline": "知识库 Agent",
     "localIdentity": "本地身份",
     "identitySettings": "本地身份设置",
+    "signOut": "退出到启动页",
     "archived": "已归档",
     "archiveFailed": "归档失败",
     "loadMoreFailed": "加载更多会话失败",
@@ -583,7 +587,8 @@
     "exitExploreShort": "退出",
     "exploreEntered": "你已经进入探索模式",
     "exploreEnteredDescription": "点击星系进入探索，点右上角可退出。",
-    "resizeWindow": "调整窗口大小"
+    "resizeWindow": "调整窗口大小",
+    "logoutFailed": "无法返回启动页，请稍后重试"
   },
   "ChatPage": {
     "suggestionSummary": "总结一下知识库里最重要的内容",

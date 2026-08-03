@@ -420,6 +420,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
+  resetSingleUser: () =>
+    request<void>("/api/v1/auth/session", { method: "DELETE" }),
   register: (b: { email: string; password: string; name?: string }) =>
     request<TokenResponse>("/api/v1/auth/register", {
       method: "POST",

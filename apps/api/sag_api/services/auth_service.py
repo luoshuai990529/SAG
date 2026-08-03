@@ -79,13 +79,20 @@ async def _first_user(session: AsyncSession) -> User | None:
 
 async def get_single_user(session: AsyncSession) -> User | None:
     """Return the one local workspace user without treating its name as a credential."""
-    return await _first_user(session)
+    user = await _first_user(session)
+    return user if user is not None and _normalized_name(user.name) else None
 
 
 async def initialize_single_user(session: AsyncSession, *, name: str) -> User:
     """Create the local workspace profile once, or return the profile another request created."""
     existing = await _first_user(session)
+    normalized_name = _normalized_name(name)
     if existing is not None:
+        if _normalized_name(existing.name):
+            return existing
+        existing.name = normalized_name
+        await session.commit()
+        await session.refresh(existing)
         return existing
 
     user = User(
@@ -93,7 +100,7 @@ async def initialize_single_user(session: AsyncSession, *, name: str) -> User:
         password_hash=await hash_password_async(secrets.token_urlsafe(32)),
         password_initialized=False,
         auth_singleton=1,
-        name=_normalized_name(name),
+        name=normalized_name,
     )
     session.add(user)
     try:
@@ -106,6 +113,15 @@ async def initialize_single_user(session: AsyncSession, *, name: str) -> User:
         return existing
     await session.refresh(user)
     return user
+
+
+async def reset_single_user(session: AsyncSession) -> None:
+    """Return the local workspace to first-use setup without deleting user-owned data."""
+    user = await _first_user(session)
+    if user is None:
+        return
+    user.name = ""
+    await session.commit()
 
 
 async def _commit_new_password_user(session: AsyncSession, user: User) -> User:
