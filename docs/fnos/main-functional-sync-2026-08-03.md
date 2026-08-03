@@ -8,7 +8,7 @@
 | --- | --- | --- | --- | --- |
 | `31bda7a` | Dify 外部知识库 API | 本轮排除 | 该 API 需要 Dify API Key，与 fnOS 无密钥产品边界冲突 | 不执行 |
 | `dc96502` | 来源 ID 复制 | 待同步 | 保留同源 API | 待执行 |
-| `5530c6b` | PostgreSQL schema | 环境阻塞 | 需要干净 PostgreSQL + vector 扩展，并设置 `SAG_E2E_POSTGRES=1`；本机探针已跳过 | `uv run pytest /private/tmp/test_postgres_schema_e2e.py -q -rs`（1 跳过） |
+| `5530c6b` | PostgreSQL schema | 已同步 | 首次引擎启动后、创建 `SourceConfig` 前初始化 schema；E2E 测试适配 fnOS single-user | 临时 pgvector PostgreSQL：修复前缺少 `source_config` 失败，修复后 1 通过 |
 | `f4c48b8` | 文档处理反馈 | 待同步 | 保留轻量资源档 | 待执行 |
 | `948e3e3` | DeepSeek V4 | 已同步 | 工具调用时关闭 thinking，不影响其他模型 | `uv run pytest tests/test_units.py -k deepseek -q`（2 通过） |
 | `029c92b` | IME Enter | 待同步 | Web 交互 | 待执行 |
