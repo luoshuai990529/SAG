@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
-**Goal:** 将官方 upstream/main 的九项 API、Dify 和 Web 能力安全前向移植到永久独立的 feat/fnos-docker-app，并交付新 FPK 体验包。
+**Goal:** 将官方 upstream/main 中已确认不需要 Dify API Key 的 API 和 Web 能力安全前向移植到永久独立的 feat/fnos-docker-app，并交付新 FPK 体验包。
 
 **Architecture:** 从实施时最新的 origin/feat/fnos-docker-app 创建同步分支和独立 worktree；按依赖顺序语义移植提交。每批次先运行对应测试，再验证 fnOS 无登录、同源单入口、三容器、持久化和发布门禁；全量通过才快进合回永久 fnOS 分支。
 
@@ -13,8 +13,8 @@
 - 永久维护分支是 feat/fnos-docker-app；禁止向 main 合并、rebase 或提交面向 main 的 PR。
 - 来源固定为 upstream/main；开始时重新 fetch 并记录 SHA。
 - 所有移植、冲突处理、构建和测试均在 sync/fnos-main-functional-20260803 worktree 中进行。
-- 只同步 31bda7a、dc96502、5530c6b、f4c48b8、948e3e3、029c92b、8018cac、7d756d6、87d8b16 的目标功能。
-- 排除 Desktop、CLI/Skill/README、社区素材、Dify 部署文档、主线 Compose、通用 CI 和纯发布提交。
+- 只同步 dc96502、5530c6b、f4c48b8、948e3e3、029c92b、87d8b16 的目标功能。
+- 排除 Desktop、CLI/Skill/README、社区素材、主线 Compose、通用 CI、纯发布提交，以及 Dify 外部知识库 API/策略/文档（31bda7a、8018cac、7d756d6）。
 - 保留 SAG_AUTH_MODE=single_user；不得要求密码、初始化密钥或重复输入用户名。
 - 保留 NEXT_PUBLIC_API_BASE=/ 同源行为；仅 gateway 暴露 3080，不得发布 API 8000 或 Web 3000。
 - 保留 sag-api、sag-web、sag-gateway 三容器，以及 \${TRIM_PKGVAR}/data:/data。
@@ -34,6 +34,10 @@
 | packages/fnos/sag/app/docker/docker-compose.yaml | FPK 运行时 | 仅必要时最小改动。 |
 | scripts/tests/*fnos*.test.mjs | 发布门禁 | 只补缺失的无登录/单入口断言。 |
 | docs/fnos/*.md | 映射和交付 | 新增同步账本与体验说明。 |
+
+## Scope Amendment: Dify exclusion
+
+用户于 2026-08-03 确认：fnOS 本轮不移植 Dify 外部知识库 API 或默认向量策略，因为该集成要求 Dify API Key。下方原 Task 2 的所有步骤由本节覆盖，不执行、不提交 Dify 运行时代码，也不把 Dify 写入候选包说明或 VM 验收项。
 
 ## Task 1: 创建隔离同步 worktree 和提交映射账本
 
@@ -407,7 +411,7 @@ shasum -a 256 dist/fnos/sag-1.4.0-fnos.5.fpk > dist/fnos/sag-1.4.0-fnos.5.fpk.sh
 fnpack verify dist/fnos/sag-1.4.0-fnos.5.fpk
 ~~~
 
-Release notes must state: Dify API/vector strategy, PostgreSQL bootstrap, DeepSeek V4, document feedback, source-ID copy, IME Enter, four knowledge REST APIs; and unchanged no-login, 3080-only, /data retention.
+Release notes must state: PostgreSQL bootstrap, DeepSeek V4, document feedback, source-ID copy, IME Enter and four knowledge REST APIs; and unchanged no-login, 3080-only, /data retention. They must state that Dify external knowledge integration is not included in this candidate.
 
 - [ ] **Step 4: Commit and push temporary branch**
 
@@ -452,7 +456,7 @@ Record all of the following:
 2. Windows/Mac 均从 http://<fnOS-IP>:3080 访问。
 3. Markdown/PDF 上传、处理反馈、检索、流式问答、引用。
 4. 来源 ID 复制；中文输入法组词 Enter 不提交聊天。
-5. 可选：私下 Dify/模型凭据下的 Dify API 和四类知识 REST API。
+5. 使用私下模型凭据验证四类知识 REST API；本候选版不验收 Dify 外部知识库 API。
 6. 停止/启动、fnOS 重启、容器重建后，既有 /data 数据继续可用。
 ~~~
 
@@ -460,7 +464,7 @@ Update release notes with date, FPK SHA-256, image digests, test summary, screen
 
 ## Plan Self-Review
 
-- 九个来源提交在 Task 2-5 具名映射；无登录、同源、单端口、三容器、持久化由全局约束、Task 4 API-base regression、Task 6 门禁覆盖。
+- 六个来源提交在 Task 3-5 具名映射；Dify 的三个来源提交在 Scope Amendment 中明确排除。无登录、同源、单端口、三容器、持久化由全局约束、Task 4 API-base regression、Task 6 门禁覆盖。
 - Desktop、CLI/Skill、文档/素材、主线 Compose、通用 CI 均显式排除。
 - 每批记录来源 SHA、排除项和测试结果；仅在临时分支全量验证后快进合回永久 fnOS 分支。
-- Dify 只移植 API/必要运行时设置；PostgreSQL e2e 若无本机服务，必须记录环境阻塞，不能伪造通过。
+- Dify 不移植任何运行时代码或设置；PostgreSQL e2e 若无本机服务，必须记录环境阻塞，不能伪造通过。
