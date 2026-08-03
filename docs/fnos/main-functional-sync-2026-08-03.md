@@ -7,7 +7,7 @@
 | 上游 SHA | 能力 | 状态 | fnOS 处理 | 验证 |
 | --- | --- | --- | --- | --- |
 | `31bda7a` | Dify 外部知识库 API | 本轮排除 | 该 API 需要 Dify API Key，与 fnOS 无密钥产品边界冲突 | 不执行 |
-| `dc96502` | 来源 ID 复制 | 待同步 | 保留同源 API | 待执行 |
+| `dc96502` | 来源 ID 复制 | 已同步 | 在知识卡片、列表与详情页显示并一键复制来源 ID；不恢复 Dify 集成文档 | 7 项相关 Web 单测、lint、typecheck 通过 |
 | `5530c6b` | PostgreSQL schema | 已同步 | 首次引擎启动后、创建 `SourceConfig` 前初始化 schema；E2E 测试适配 fnOS single-user | 临时 pgvector PostgreSQL：修复前缺少 `source_config` 失败，修复后 1 通过 |
 | `f4c48b8` | 文档处理反馈 | 已同步 | 重试期间保留断点并展示实时处理活动；fnOS Docker 固定抽取并发仍为 2，不采用上游默认 30 | API Ruff 与 36 项回归通过；Web 32 项单测、lint、typecheck、生产构建通过 |
 | `948e3e3` | DeepSeek V4 | 已同步 | 工具调用时关闭 thinking，不影响其他模型 | `uv run pytest tests/test_units.py -k deepseek -q`（2 通过） |
