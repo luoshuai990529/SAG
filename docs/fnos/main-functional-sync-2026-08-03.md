@@ -13,7 +13,7 @@
 | `948e3e3` | DeepSeek V4 | 已同步 | 工具调用时关闭 thinking，不影响其他模型 | `uv run pytest tests/test_units.py -k deepseek -q`（2 通过） |
 | `029c92b` | IME Enter | 待同步 | Web 交互 | 待执行 |
 | `8018cac`、`7d756d6` | Dify 向量策略 | 本轮排除 | 依赖已排除的 Dify 外部知识库 API | 不执行 |
-| `87d8b16` | 知识 REST API | 待同步 | API v1 路由 | 待执行 |
+| `87d8b16` | 知识 REST API | 已同步 | 新增大纲、全文检索、文档读取与实体上下文四组同源 API 路由 | Ruff 通过；路由 OpenAPI 与 single-user 回归测试 2 项通过 |
 
 ## 基线验证
 
