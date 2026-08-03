@@ -18,6 +18,7 @@ from sag_api.core.errors import (
     ServiceUnavailableError,
     UpstreamError,
 )
+from sag_api.enums import DocumentStatus
 from sag_api.parsing import service
 from sag_api.parsing.mineru import MinerUClient, _assert_public_host, _interpret_poll_payload
 from sag_api.parsing.service import PreparedDocument
@@ -803,6 +804,38 @@ def test_mineru_pending_and_nested_failure_payloads_are_not_misclassified():
     }
     assert _interpret_poll_payload(nested_failure, "task-1") == ("failed", "bad pdf")
     assert _interpret_poll_payload("A0202", "task-1")[0] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_retryable_document_returns_to_pending_without_losing_checkpoint():
+    from sag_api.jobs import inproc
+
+    document = SimpleNamespace(
+        status=DocumentStatus.FAILED,
+        error="upstream timeout",
+        progress=64,
+        chunk_count=12,
+        event_count=7,
+        token_usage=9_000,
+        sag_source_id="derived-source",
+    )
+
+    class FakeSession:
+        async def get(self, _model, document_id):
+            assert document_id == "document-1"
+            return document
+
+    await inproc._mark_document_waiting_retry(
+        FakeSession(), SimpleNamespace(document_id="document-1")
+    )
+
+    assert document.status == DocumentStatus.PENDING
+    assert document.error is None
+    assert document.progress == 64
+    assert document.chunk_count == 12
+    assert document.event_count == 7
+    assert document.token_usage == 9_000
+    assert document.sag_source_id == "derived-source"
 
 
 @pytest.mark.asyncio
