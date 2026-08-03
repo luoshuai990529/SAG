@@ -26,6 +26,8 @@ test("dedicated fnOS branch CI and immutable candidate tag gate release writes",
   assert.doesNotMatch(workflow, /workflow_dispatch|refs\/heads\/main|\binputs\./);
   assert.match(workflow, /concurrency:\n  group: fnos-candidate-\$\{\{ github\.repository \}\}\n  cancel-in-progress: false/);
   assert.match(candidate, /git ls-remote --heads origin feat\/fnos-docker-app/);
+  assert.doesNotMatch(candidate, /test "\$version" = "1\.4\.0-fnos\.\d+"/);
+  assert.match(candidate, /case "\$version" in\n            1\.4\.0-fnos\.\[0-9\]\*\) ;;/);
   assert.match(candidate, /expected_tag="fnos-candidate-\$\{version\}-\$\{GITHUB_SHA:0:12\}"/);
   assert.match(candidate, /test "\$GITHUB_REF_NAME" = "\$expected_tag"/);
   assert.match(candidate, /test "\$GITHUB_SHA" = "\$remote_revision"/);

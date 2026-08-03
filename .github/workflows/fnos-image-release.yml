@@ -45,7 +45,10 @@ jobs:
           appname=$(awk -F= '/^appname[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2}' packages/fnos/sag/manifest)
           version=$(awk -F= '/^version[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2}' packages/fnos/sag/manifest)
           test "$appname" = "sag"
-          test "$version" = "1.4.0-fnos.5"
+          case "$version" in
+            1.4.0-fnos.[0-9]*) ;;
+            *) exit 1 ;;
+          esac
           expected_tag="fnos-candidate-${version}-${GITHUB_SHA:0:12}"
           test "$GITHUB_REF_NAME" = "$expected_tag"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
