@@ -158,6 +158,34 @@ def test_litellm_policy_preserves_explicit_reasoning_and_allowed_params():
     assert request["allowed_openai_params"] == ["seed", "reasoning_effort"]
 
 
+@pytest.mark.parametrize(
+    ("base_url", "model"),
+    [
+        ("https://api.deepseek.com", "deepseek-v4-flash"),
+        ("https://openai-compatible.example.com/v1", "deepseek/deepseek-v4-pro"),
+    ],
+)
+def test_deepseek_v4_tool_request_disables_thinking(base_url, model):
+    configured = Settings(
+        _env_file=None,
+        llm_provider="openai",
+        llm_base_url=base_url,
+        llm_api_key="provider-key",
+        llm_model=model,
+    )
+
+    request = apply_litellm_completion_policy(
+        configured,
+        {
+            "model": configured.routed_llm_model,
+            "messages": [],
+            "tools": [{"type": "function", "function": {"name": "search_context"}}],
+        },
+    )
+
+    assert request["extra_body"]["thinking"] == {"type": "disabled"}
+
+
 @pytest.mark.asyncio
 async def test_installed_litellm_policy_covers_dependency_owned_calls():
     import litellm
