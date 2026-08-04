@@ -1,7 +1,7 @@
 {
   ".url": {
     "sag.Application": {
-      "title": "{display_name}",
+      "title": "SAG知识库",
       "icon": "images/icon_{0}.png",
       "type": "url",
       "protocol": "http",

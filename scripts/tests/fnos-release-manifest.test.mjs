@@ -14,20 +14,20 @@ function validManifest() {
   return {
     schema_version: 1,
     appname: "sag",
-    version: "1.4.0-fnos.7",
+    version: "1.4.0-fnos.8",
     channel: "global",
     revision,
-    candidate_tag: "fnos-candidate-1.4.0-fnos.7-aaaaaaaaaaaa",
+    candidate_tag: "fnos-candidate-1.4.0-fnos.8-aaaaaaaaaaaa",
     candidate_workflow: {
       run_id: "30798626087",
       url: "https://github.com/luoshuai990529/SAG/actions/runs/30798626087",
     },
     images: {
-      api: `ghcr.io/luoshuai990529/sag-api@sha256:${"b".repeat(64)}`,
-      web: `ghcr.io/luoshuai990529/sag-web@sha256:${"c".repeat(64)}`,
-      gateway: `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@sha256:${"d".repeat(64)}`,
+      api: `ghcr.1ms.run/luoshuai990529/sag-api@sha256:${"b".repeat(64)}`,
+      web: `ghcr.1ms.run/luoshuai990529/sag-web@sha256:${"c".repeat(64)}`,
+      gateway: `ghcr.1ms.run/luoshuai990529/sag-gateway:1.4.0-fnos.8@sha256:${"d".repeat(64)}`,
     },
-    fpk: { filename: "sag-1.4.0-fnos.7.fpk", sha256: "e".repeat(64) },
+    fpk: { filename: "sag-1.4.0-fnos.8.fpk", sha256: "e".repeat(64) },
   };
 }
 
@@ -56,7 +56,7 @@ test("release manifest accepts a complete global immutable release record", asyn
 
 test("release manifest rejects mutable image tags and inconsistent identity fields", async (t) => {
   const manifest = validManifest();
-  manifest.images.api = "ghcr.io/luoshuai990529/sag-api:1.4.0-fnos.7";
+  manifest.images.api = "ghcr.1ms.run/luoshuai990529/sag-api:1.4.0-fnos.8";
   manifest.candidate_tag = "fnos-candidate-1.4.0-fnos.6-aaaaaaaaaaaa";
   manifest.fpk.filename = "sag-1.4.0-fnos.8.fpk";
   const input = await withManifest(t, manifest);

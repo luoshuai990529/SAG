@@ -30,7 +30,7 @@ const digestA = `sha256:${"a".repeat(64)}`;
 const digestB = `sha256:${"b".repeat(64)}`;
 const digestD = `sha256:${"d".repeat(64)}`;
 const gatewayDigest = "sha256:758f0377a23257333a8957eb5d1f67ccc4b84dfc8a5c3f939e440b087076453c";
-const gatewayReference = `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@${gatewayDigest}`;
+const gatewayReference = `ghcr.1ms.run/luoshuai990529/sag-gateway:1.4.0-fnos.8@${gatewayDigest}`;
 const gatewayRevision = "ccdab6c99ae2e2fc53a144dc68d6b8f44163adf2";
 const gatewayAmd64Digest = "sha256:8a4f4b94275ff59d809477799cbbaf1a7ab65ed1871403d05e31fd66bdb8db82";
 const gatewayArm64Digest = "sha256:d64d001f60e9a65d45980907e9070fc46d418980f311052e73c0df2eccc3cc30";
@@ -86,11 +86,11 @@ async function fakeRegistry(t, {
   const compose = JSON.stringify({
     services: {
       api: {
-        image: `ghcr.io/luoshuai990529/sag-api@${digestA}`,
+        image: `ghcr.1ms.run/luoshuai990529/sag-api@${digestA}`,
         env_file: [{ path: "${TRIM_PKGETC}/sag.env", required: true }],
         environment: { SAG_AUTH_MODE: "single_user" },
       },
-      web: { image: `ghcr.io/luoshuai990529/sag-web@${digestB}` },
+      web: { image: `ghcr.1ms.run/luoshuai990529/sag-web@${digestB}` },
       gateway: {
         image: gatewayReference,
         ports: ["${TRIM_SERVICE_PORT}:80"],
@@ -109,8 +109,8 @@ if [[ "$1 $2 $3 \${4:-}" == "buildx imagetools inspect --raw" ]]; then
   esac
 elif [[ "$1 $2 $3 \${4:-} \${5:-}" == "buildx imagetools inspect --format {{.Manifest.Digest}}" ]]; then
   case "\${6:-}" in
-    ghcr.io/luoshuai990529/sag-api:${candidateVersion}) printf '%s\\n' "$FAKE_API_TAG_DIGEST" ;;
-    ghcr.io/luoshuai990529/sag-web:${candidateVersion}) printf '%s\\n' "$FAKE_WEB_TAG_DIGEST" ;;
+    ghcr.1ms.run/luoshuai990529/sag-api:${candidateVersion}) printf '%s\\n' "$FAKE_API_TAG_DIGEST" ;;
+    ghcr.1ms.run/luoshuai990529/sag-web:${candidateVersion}) printf '%s\\n' "$FAKE_WEB_TAG_DIGEST" ;;
     *) exit 8 ;;
   esac
 elif [[ "$1 $2" == "compose -f" ]]; then
@@ -179,7 +179,7 @@ function run(command, args, options = {}) {
 test("release build requires all three digest-pinned image references", async (t) => {
   const root = await tempRoot(t);
   const result = build([
-    "--api-image", `ghcr.io/luoshuai990529/sag-api:${candidateVersion}`,
+    "--api-image", `ghcr.1ms.run/luoshuai990529/sag-api:${candidateVersion}`,
     "--output", path.join(root, "candidate.fpk"),
   ]);
 
@@ -198,8 +198,8 @@ test("test-only fixture references are refused outside structural-test mode", as
 test("render-only output is restricted to structural test mode", async (t) => {
   const root = await tempRoot(t);
   const result = build([
-    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
-    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--api-image", `ghcr.1ms.run/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.1ms.run/luoshuai990529/sag-web@${digestB}`,
     "--nginx-image", gatewayReference,
     "--render-output", path.join(root, "rendered-sag"),
   ]);
@@ -244,9 +244,9 @@ test("package build rejects simultaneous FPK and rendered-tree outputs", async (
 test("release build refuses an immutable Nginx digest absent from the reviewed policy", async (t) => {
   const root = await tempRoot(t);
   const result = build([
-    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
-    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
-    "--nginx-image", `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@sha256:${"f".repeat(64)}`,
+    "--api-image", `ghcr.1ms.run/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.1ms.run/luoshuai990529/sag-web@${digestB}`,
+    "--nginx-image", `ghcr.1ms.run/luoshuai990529/sag-gateway:1.4.0-fnos.8@sha256:${"f".repeat(64)}`,
     "--output", path.join(root, "candidate.fpk"),
   ]);
 
@@ -265,8 +265,8 @@ test("release build refuses an approved digest when registry inspection fails", 
   await chmod(docker, 0o755);
 
   const result = build([
-    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
-    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--api-image", `ghcr.1ms.run/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.1ms.run/luoshuai990529/sag-web@${digestB}`,
     "--nginx-image", gatewayReference,
     "--output", output,
   ], {
@@ -276,15 +276,15 @@ test("release build refuses an approved digest when registry inspection fails", 
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /docker failed/i);
-  assert.match((await readFile(commandLog, "utf8")).trim(), new RegExp(`^buildx imagetools inspect --raw ghcr\\.io/luoshuai990529/sag-api@${digestA}$`));
+  assert.match((await readFile(commandLog, "utf8")).trim(), new RegExp(`^buildx imagetools inspect --raw ghcr\\.1ms\\.run/luoshuai990529/sag-api@${digestA}$`));
   await assert.rejects(access(output));
 });
 
 test("release build rejects an arm64-only API index", async (t) => {
   const root = await tempRoot(t);
   const result = build([
-    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
-    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--api-image", `ghcr.1ms.run/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.1ms.run/luoshuai990529/sag-web@${digestB}`,
     "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
   ], await fakeRegistry(t, { apiRaw: imageIndex([arm64]) }));
@@ -296,8 +296,8 @@ test("release build rejects an arm64-only API index", async (t) => {
 test("release build rejects a single-manifest Web image", async (t) => {
   const root = await tempRoot(t);
   const result = build([
-    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
-    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--api-image", `ghcr.1ms.run/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.1ms.run/luoshuai990529/sag-web@${digestB}`,
     "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
   ], await fakeRegistry(t, {
@@ -311,8 +311,8 @@ test("release build rejects a single-manifest Web image", async (t) => {
 test("release build rejects an API index missing linux/arm64", async (t) => {
   const root = await tempRoot(t);
   const result = build([
-    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
-    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--api-image", `ghcr.1ms.run/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.1ms.run/luoshuai990529/sag-web@${digestB}`,
     "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
   ], await fakeRegistry(t, { apiRaw: imageIndex([amd64]) }));
@@ -324,8 +324,8 @@ test("release build rejects an API index missing linux/arm64", async (t) => {
 test("release build rejects an Nginx index missing linux/amd64", async (t) => {
   const root = await tempRoot(t);
   const result = build([
-    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
-    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--api-image", `ghcr.1ms.run/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.1ms.run/luoshuai990529/sag-web@${digestB}`,
     "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
   ], await fakeRegistry(t, { nginxRaw: gatewayIndex([[arm64, gatewayArm64Digest]]) }));
@@ -337,8 +337,8 @@ test("release build rejects an Nginx index missing linux/amd64", async (t) => {
 test("release build rejects an API digest not bound to the candidate tag", async (t) => {
   const root = await tempRoot(t);
   const result = build([
-    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
-    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--api-image", `ghcr.1ms.run/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.1ms.run/luoshuai990529/sag-web@${digestB}`,
     "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
   ], await fakeRegistry(t, { apiTagDigest: digestD }));
@@ -350,8 +350,8 @@ test("release build rejects an API digest not bound to the candidate tag", async
 test("release build rejects a Web digest not bound to the exact candidate tag", async (t) => {
   const root = await tempRoot(t);
   const result = build([
-    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
-    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--api-image", `ghcr.1ms.run/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.1ms.run/luoshuai990529/sag-web@${digestB}`,
     "--nginx-image", gatewayReference,
     "--output", path.join(root, "candidate.fpk"),
   ], await fakeRegistry(t, { webTagDigest: digestD }));
@@ -364,8 +364,8 @@ test("release build accepts candidate-bound multi-platform API and Web indexes",
   const root = await tempRoot(t);
   const output = path.join(root, "candidate.fpk");
   const result = build([
-    "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
-    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
+    "--api-image", `ghcr.1ms.run/luoshuai990529/sag-api@${digestA}`,
+    "--web-image", `ghcr.1ms.run/luoshuai990529/sag-web@${digestB}`,
     "--nginx-image", gatewayReference,
     "--output", output,
   ], await fakeRegistry(t));
@@ -409,6 +409,7 @@ test("structural mode renders and validates the real package tree in every envir
   for (const expected of [
     /appname\s*=\s*sag/m,
     new RegExp(`^version\\s*=\\s*${candidateVersionRegex}$`, "m"),
+    /display_name\s*=\s*SAG知识库/m,
     /platform\s*=\s*all/m,
     /os_min_version\s*=\s*1\.2\.0302/m,
     /service_port\s*=\s*3080/m,
@@ -467,7 +468,9 @@ test("structural mode renders and validates the real package tree in every envir
   assert.equal(privilege.defaults["run-as"], "root");
   assert.equal(privilege.username, "docker-sag");
   assert.equal(privilege.groupname, "docker-sag");
-  JSON.parse(await readFile(path.join(app, "ui/config"), "utf8"));
+  const desktopConfig = JSON.parse(await readFile(path.join(app, "ui/config"), "utf8"));
+  assert.equal(desktopConfig[".url"]["sag.Application"].title, "SAG知识库");
+  assert.doesNotMatch(JSON.stringify(desktopConfig), /\{display_name\}/);
   const uninstallWizard = JSON.parse(await readFile(path.join(unpacked, "wizard/uninstall_uifile"), "utf8"));
   const choices = uninstallWizard[0].items[0].subitems;
   assert.equal(choices.find(({ key }) => key === "SAG_RETAIN_DATA").defaultValue, true);

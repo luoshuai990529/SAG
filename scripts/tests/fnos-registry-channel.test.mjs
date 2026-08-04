@@ -8,14 +8,14 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const script = path.join(repoRoot, "scripts/fnos-registry-channel.mjs");
 const digest = `sha256:${"a".repeat(64)}`;
 
-function run(channel, api = `ghcr.io/luoshuai990529/sag-api@${digest}`, prefix) {
+function run(channel, api = `ghcr.1ms.run/luoshuai990529/sag-api@${digest}`, prefix) {
   return spawnSync(process.execPath, [
     script,
     "validate",
     "--channel", channel,
     "--api-image", api,
-    "--web-image", `ghcr.io/luoshuai990529/sag-web@${digest}`,
-    "--gateway-image", `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@${digest}`,
+    "--web-image", `ghcr.1ms.run/luoshuai990529/sag-web@${digest}`,
+    "--gateway-image", `ghcr.1ms.run/luoshuai990529/sag-gateway:1.4.0-fnos.8@${digest}`,
     ...(prefix ? ["--cn-repository-prefix", prefix] : []),
   ], { cwd: repoRoot, encoding: "utf8" });
 }

@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 const digestReference = /^[a-z0-9.-]+(?:\/[a-z0-9._-]+)+(?::[a-z0-9._-]+)?@sha256:[a-f0-9]{64}$/;
 
 const globalRepositories = {
-  api: "ghcr.io/luoshuai990529/sag-api@",
-  web: "ghcr.io/luoshuai990529/sag-web@",
-  gateway: "ghcr.io/luoshuai990529/sag-gateway:",
+  api: "ghcr.1ms.run/luoshuai990529/sag-api@",
+  web: "ghcr.1ms.run/luoshuai990529/sag-web@",
+  gateway: "ghcr.1ms.run/luoshuai990529/sag-gateway:",
 };
 const cnRepositoryPrefix = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?(?:\/[a-z0-9][a-z0-9._-]*)+$/;
 
