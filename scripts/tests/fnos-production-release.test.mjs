@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -37,4 +37,32 @@ test("prepare rejects a release request with an invalid channel", () => {
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /channel.*global.*cn/i);
+});
+
+test("package rejects candidate evidence that is not pinned to approved registries", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sag-fnos-release-package-"));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+  const input = path.join(root, "release-input.json");
+  const evidence = path.join(root, "candidate-evidence.json");
+  await writeFile(input, JSON.stringify({
+    schema_version: 1,
+    appname: "sag",
+    version: "1.4.0-fnos.6",
+    channel: "global",
+    revision: "a".repeat(40),
+    candidate_tag: "fnos-candidate-1.4.0-fnos.6-aaaaaaaaaaaa",
+    candidate_workflow: { run_id: "30798626087", url: "https://github.com/luoshuai990529/SAG/actions/runs/30798626087" },
+  }));
+  await writeFile(evidence, JSON.stringify({
+    api: `registry.example/sag-api@sha256:${"b".repeat(64)}`,
+    web: `ghcr.io/luoshuai990529/sag-web@sha256:${"c".repeat(64)}`,
+    gateway: `docker.io/library/nginx:1.30.4-alpine@sha256:${"d".repeat(64)}`,
+  }));
+  const result = spawnSync(process.execPath, [
+    script, "package", "--input", input, "--candidate-evidence", evidence,
+    "--output", path.join(root, "out"),
+  ], { cwd: repoRoot, encoding: "utf8" });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /approved|global.*api/i);
 });
