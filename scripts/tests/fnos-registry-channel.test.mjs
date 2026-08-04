@@ -8,7 +8,7 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const script = path.join(repoRoot, "scripts/fnos-registry-channel.mjs");
 const digest = `sha256:${"a".repeat(64)}`;
 
-function run(channel, api = `ghcr.io/luoshuai990529/sag-api@${digest}`) {
+function run(channel, api = `ghcr.io/luoshuai990529/sag-api@${digest}`, prefix) {
   return spawnSync(process.execPath, [
     script,
     "validate",
@@ -16,6 +16,7 @@ function run(channel, api = `ghcr.io/luoshuai990529/sag-api@${digest}`) {
     "--api-image", api,
     "--web-image", `ghcr.io/luoshuai990529/sag-web@${digest}`,
     "--gateway-image", `docker.io/library/nginx:1.30.4-alpine@${digest}`,
+    ...(prefix ? ["--cn-repository-prefix", prefix] : []),
   ], { cwd: repoRoot, encoding: "utf8" });
 }
 
@@ -30,8 +31,27 @@ test("global channel rejects an arbitrary registry even with a digest", () => {
   assert.match(result.stderr, /global.*api|approved/i);
 });
 
-test("cn channel is unavailable until a SAG-owned mirror is configured", () => {
+test("cn channel rejects publication until an approved repository prefix is supplied", () => {
   const result = run("cn");
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /cn.*mirror|mirror.*provisioned/i);
+  assert.match(result.stderr, /cn.*requires|repository-prefix/i);
+});
+
+test("cn channel accepts only its explicitly approved mirror repositories", () => {
+  const prefix = "registry.sag.example.cn/fnos";
+  const result = run(
+    "cn",
+    `${prefix}/sag-api@${digest}`,
+    prefix,
+  );
+  const args = [
+    script, "validate", "--channel", "cn",
+    "--cn-repository-prefix", prefix,
+    "--api-image", `${prefix}/sag-api@${digest}`,
+    "--web-image", `${prefix}/sag-web@${digest}`,
+    "--gateway-image", `${prefix}/sag-gateway@${digest}`,
+  ];
+  const accepted = spawnSync(process.execPath, args, { cwd: repoRoot, encoding: "utf8" });
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.notEqual(result.status, 0, "the helper's global web/gateway references must not pass cn validation");
 });

@@ -47,6 +47,7 @@ export function validateReleaseManifest(value) {
   const images = requireObject(manifest.images, "images");
   validateChannelImages({
     channel: manifest.channel,
+    cnRepositoryPrefix: manifest.cn_repository_prefix,
     api: images.api,
     web: images.web,
     gateway: images.gateway,

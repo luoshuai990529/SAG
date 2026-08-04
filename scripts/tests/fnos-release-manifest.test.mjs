@@ -66,12 +66,28 @@ test("release manifest rejects mutable image tags and inconsistent identity fiel
   assert.match(result.stderr, /immutable|candidate tag|filename/i);
 });
 
-test("release manifest rejects a cn channel that still points at global registries", async (t) => {
+test("release manifest rejects a cn channel without an approved repository prefix", async (t) => {
   const manifest = validManifest();
   manifest.channel = "cn";
   const input = await withManifest(t, manifest);
   const result = validate(input);
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /cn.*mirror|mirror.*provisioned/i);
+  assert.match(result.stderr, /cn.*requires|repository-prefix/i);
+});
+
+test("release manifest accepts an immutable cn release only when all images use its approved prefix", async (t) => {
+  const manifest = validManifest();
+  const prefix = "registry.sag.example.cn/fnos";
+  manifest.channel = "cn";
+  manifest.cn_repository_prefix = prefix;
+  manifest.images = {
+    api: `${prefix}/sag-api@sha256:${"b".repeat(64)}`,
+    web: `${prefix}/sag-web@sha256:${"c".repeat(64)}`,
+    gateway: `${prefix}/sag-gateway@sha256:${"d".repeat(64)}`,
+  };
+  const input = await withManifest(t, manifest);
+  const result = validate(input);
+
+  assert.equal(result.status, 0, result.stderr);
 });

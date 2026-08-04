@@ -10,6 +10,7 @@ const globalRepositories = {
   web: "ghcr.io/luoshuai990529/sag-web@",
   gateway: "docker.io/library/nginx:1.30.4-alpine@",
 };
+const cnRepositoryPrefix = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?(?:\/[a-z0-9][a-z0-9._-]*)+$/;
 
 function fail(message) {
   throw new Error(`fnos-registry-channel: ${message}`);
@@ -36,18 +37,30 @@ function requireOption(options, name) {
   return value;
 }
 
-function validateChannel(channel) {
+export function validateChannelConfiguration({ channel, cnRepositoryPrefix: prefix }) {
   if (channel !== "global" && channel !== "cn") fail("--channel must be global or cn");
-  if (channel === "cn") fail("cn mirror is not provisioned; no China registry channel is approved yet");
+  if (channel !== "cn") return { channel, repositories: globalRepositories };
+  if (!prefix) fail("cn channel requires an approved --cn-repository-prefix");
+  if (!cnRepositoryPrefix.test(prefix) || !prefix.split("/")[0].includes(".")) {
+    fail("cn repository prefix must be a DNS registry host plus a lowercase namespace");
+  }
+  return {
+    channel,
+    repositories: {
+      api: `${prefix}/sag-api@`,
+      web: `${prefix}/sag-web@`,
+      gateway: `${prefix}/sag-gateway@`,
+    },
+  };
 }
 
-export function validateChannelImages({ channel, api, web, gateway }) {
-  validateChannel(channel);
+export function validateChannelImages({ channel, cnRepositoryPrefix: prefix, api, web, gateway }) {
+  const configuration = validateChannelConfiguration({ channel, cnRepositoryPrefix: prefix });
   const images = { api, web, gateway };
   for (const [name, image] of Object.entries(images)) {
     if (!digestReference.test(image)) fail(`${name} image must use a lowercase immutable sha256 digest reference`);
-    if (!image.startsWith(globalRepositories[name])) {
-      fail(`global ${name} image must use the approved repository`);
+    if (!image.startsWith(configuration.repositories[name])) {
+      fail(`${channel} ${name} image must use the approved repository`);
     }
   }
   return { channel, images };
@@ -58,6 +71,7 @@ function main() {
   if (options.command !== "validate") fail(`unknown command: ${options.command}`);
   const result = validateChannelImages({
     channel: requireOption(options, "channel"),
+    cnRepositoryPrefix: options.cn_repository_prefix,
     api: requireOption(options, "api_image"),
     web: requireOption(options, "web_image"),
     gateway: requireOption(options, "gateway_image"),
