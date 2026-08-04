@@ -29,8 +29,8 @@ const candidateVersionRegex = candidateVersion.replace(/[.*+?^${}()|[\]\\]/g, "\
 const digestA = `sha256:${"a".repeat(64)}`;
 const digestB = `sha256:${"b".repeat(64)}`;
 const digestD = `sha256:${"d".repeat(64)}`;
-const gatewayDigest = "sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
-const gatewayReference = `docker.io/library/nginx:1.30.4-alpine@${gatewayDigest}`;
+const gatewayDigest = "sha256:758f0377a23257333a8957eb5d1f67ccc4b84dfc8a5c3f939e440b087076453c";
+const gatewayReference = `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@${gatewayDigest}`;
 const gatewayRevision = "ccdab6c99ae2e2fc53a144dc68d6b8f44163adf2";
 const gatewayAmd64Digest = "sha256:8a4f4b94275ff59d809477799cbbaf1a7ab65ed1871403d05e31fd66bdb8db82";
 const gatewayArm64Digest = "sha256:d64d001f60e9a65d45980907e9070fc46d418980f311052e73c0df2eccc3cc30";
@@ -104,7 +104,7 @@ if [[ "$1 $2 $3 \${4:-}" == "buildx imagetools inspect --raw" ]]; then
   case "\${5:-}" in
     *sag-api*) printf '%s\\n' "$FAKE_API_RAW" ;;
     *sag-web*) printf '%s\\n' "$FAKE_WEB_RAW" ;;
-    *nginx*) printf '%s\\n' "$FAKE_NGINX_RAW" ;;
+    *sag-gateway*) printf '%s\\n' "$FAKE_NGINX_RAW" ;;
     *) exit 7 ;;
   esac
 elif [[ "$1 $2 $3 \${4:-} \${5:-}" == "buildx imagetools inspect --format {{.Manifest.Digest}}" ]]; then
@@ -246,7 +246,7 @@ test("release build refuses an immutable Nginx digest absent from the reviewed p
   const result = build([
     "--api-image", `ghcr.io/luoshuai990529/sag-api@${digestA}`,
     "--web-image", `ghcr.io/luoshuai990529/sag-web@${digestB}`,
-    "--nginx-image", `docker.io/library/nginx:1.30.4-alpine@sha256:${"f".repeat(64)}`,
+    "--nginx-image", `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@sha256:${"f".repeat(64)}`,
     "--output", path.join(root, "candidate.fpk"),
   ]);
 
@@ -409,7 +409,7 @@ test("structural mode renders and validates the real package tree in every envir
   for (const expected of [
     /appname\s*=\s*sag/m,
     new RegExp(`^version\\s*=\\s*${candidateVersionRegex}$`, "m"),
-    /platform\s*=\s*x86/m,
+    /platform\s*=\s*all/m,
     /os_min_version\s*=\s*1\.2\.0302/m,
     /service_port\s*=\s*3080/m,
     /checkport\s*=\s*true/m,

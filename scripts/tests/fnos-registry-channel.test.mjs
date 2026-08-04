@@ -15,12 +15,12 @@ function run(channel, api = `ghcr.io/luoshuai990529/sag-api@${digest}`, prefix) 
     "--channel", channel,
     "--api-image", api,
     "--web-image", `ghcr.io/luoshuai990529/sag-web@${digest}`,
-    "--gateway-image", `docker.io/library/nginx:1.30.4-alpine@${digest}`,
+    "--gateway-image", `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@${digest}`,
     ...(prefix ? ["--cn-repository-prefix", prefix] : []),
   ], { cwd: repoRoot, encoding: "utf8" });
 }
 
-test("global channel accepts only SAG GHCR repositories and the reviewed Docker Hub gateway", () => {
+test("global channel accepts only the approved SAG GHCR repositories", () => {
   const result = run("global");
   assert.equal(result.status, 0, result.stderr);
 });

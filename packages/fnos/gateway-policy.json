@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
   "image": {
-    "repository": "docker.io/library/nginx",
-    "tag": "1.30.4-alpine",
-    "indexDigest": "sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46",
-    "reference": "docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46"
+    "repository": "ghcr.io/luoshuai990529/sag-gateway",
+    "tag": "1.4.0-fnos.7",
+    "upstreamTag": "1.30.4-alpine",
+    "indexDigest": "sha256:758f0377a23257333a8957eb5d1f67ccc4b84dfc8a5c3f939e440b087076453c",
+    "reference": "ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@sha256:758f0377a23257333a8957eb5d1f67ccc4b84dfc8a5c3f939e440b087076453c"
   },
   "requiredPlatforms": [
     {
@@ -27,7 +28,8 @@
     "sources": [
       "https://nginx.org/2026.html",
       "https://nginx.org/en/security_advisories.html",
-      "https://hub.docker.com/_/nginx/"
+      "https://hub.docker.com/_/nginx/",
+      "ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7"
     ]
   },
   "vulnerabilityGate": {
@@ -50,7 +52,7 @@
       "family": "alpine",
       "version": "3.24.1"
     },
-    "expectedTarget": "docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46 (alpine 3.24.1)",
+    "expectedTarget": "ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@sha256:758f0377a23257333a8957eb5d1f67ccc4b84dfc8a5c3f939e440b087076453c (alpine 3.24.1)",
     "sourceReportSha256": "9fa13bd965a961408daea1d761d7a52f7ed246dc845211c1d3b51873a5b217a9"
   }
 }

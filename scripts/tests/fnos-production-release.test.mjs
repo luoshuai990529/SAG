@@ -16,7 +16,7 @@ test("prepare records a global release input for the checked-out fnOS manifest",
   const result = spawnSync(process.execPath, [
     script,
     "prepare",
-    "--version", "1.4.0-fnos.6",
+    "--version", "1.4.0-fnos.7",
     "--channel", "global",
     "--candidate-run-id", "30798626087",
     "--output", output,
@@ -29,7 +29,7 @@ test("prepare rejects a release request with an invalid channel", () => {
   const result = spawnSync(process.execPath, [
     script,
     "prepare",
-    "--version", "1.4.0-fnos.6",
+    "--version", "1.4.0-fnos.7",
     "--channel", "mirror.example",
     "--candidate-run-id", "30798626087",
     "--output", path.join(os.tmpdir(), "sag-fnos-invalid-release-input.json"),
@@ -47,16 +47,16 @@ test("package rejects candidate evidence that is not pinned to approved registri
   await writeFile(input, JSON.stringify({
     schema_version: 1,
     appname: "sag",
-    version: "1.4.0-fnos.6",
+    version: "1.4.0-fnos.7",
     channel: "global",
     revision: "a".repeat(40),
-    candidate_tag: "fnos-candidate-1.4.0-fnos.6-aaaaaaaaaaaa",
+    candidate_tag: "fnos-candidate-1.4.0-fnos.7-aaaaaaaaaaaa",
     candidate_workflow: { run_id: "30798626087", url: "https://github.com/luoshuai990529/SAG/actions/runs/30798626087" },
   }));
   await writeFile(evidence, JSON.stringify({
     api: `registry.example/sag-api@sha256:${"b".repeat(64)}`,
     web: `ghcr.io/luoshuai990529/sag-web@sha256:${"c".repeat(64)}`,
-    gateway: `docker.io/library/nginx:1.30.4-alpine@sha256:${"d".repeat(64)}`,
+    gateway: `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@sha256:${"d".repeat(64)}`,
   }));
   const result = spawnSync(process.execPath, [
     script, "package", "--input", input, "--candidate-evidence", evidence,

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const validator = fileURLToPath(new URL("../validate-fnos-release.mjs", import.meta.url));
 const digest = `sha256:${"a".repeat(64)}`;
-const gatewayReference = "docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
+const gatewayReference = "ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@sha256:758f0377a23257333a8957eb5d1f67ccc4b84dfc8a5c3f939e440b087076453c";
 
 function validCompose({
   api = "",
@@ -211,7 +211,7 @@ test("rejects a non-digest image reference", async (t) => {
 test("rejects an immutable but unreviewed Nginx gateway digest", async (t) => {
   const compose = await fixture(t, validCompose().replace(
     gatewayReference,
-    `docker.io/library/nginx:1.30.4-alpine@sha256:${"f".repeat(64)}`,
+    `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@sha256:${"f".repeat(64)}`,
   ));
   const result = validate(compose);
 

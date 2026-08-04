@@ -25,7 +25,7 @@ function validManifest() {
     images: {
       api: `ghcr.io/luoshuai990529/sag-api@sha256:${"b".repeat(64)}`,
       web: `ghcr.io/luoshuai990529/sag-web@sha256:${"c".repeat(64)}`,
-      gateway: `docker.io/library/nginx:1.30.4-alpine@sha256:${"d".repeat(64)}`,
+      gateway: `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@sha256:${"d".repeat(64)}`,
     },
     fpk: { filename: "sag-1.4.0-fnos.7.fpk", sha256: "e".repeat(64) },
   };

@@ -21,12 +21,12 @@ const digestReference = /^[a-z0-9.-]+(?:\/[a-z0-9._-]+)+(?::[a-z0-9._-]+)?@sha25
 const releaseRepositories = {
   api: "ghcr.io/luoshuai990529/sag-api@",
   web: "ghcr.io/luoshuai990529/sag-web@",
-  nginx: "docker.io/library/nginx:",
+  nginx: "ghcr.io/luoshuai990529/sag-gateway:",
 };
 const structuralRepositories = {
   api: "test.invalid/sag-api@",
   web: "test.invalid/sag-web@",
-  nginx: "docker.io/library/nginx:",
+  nginx: "ghcr.io/luoshuai990529/sag-gateway:",
 };
 const tokens = {
   api: "__SAG_API_IMAGE__",

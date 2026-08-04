@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const canonicalizer = path.join(repoRoot, "scripts/canonicalize-fnos-trivy-report.mjs");
-const reference = "docker.io/library/nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
+const reference = "ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@sha256:758f0377a23257333a8957eb5d1f67ccc4b84dfc8a5c3f939e440b087076453c";
 const expectedTarget = `${reference} (alpine 3.24.1)`;
 
 async function fixture(t, report) {

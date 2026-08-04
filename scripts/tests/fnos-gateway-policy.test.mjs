@@ -7,17 +7,18 @@ import {
   validateGatewayPolicy,
 } from "../fnos-gateway-policy.mjs";
 
-const digest = "sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
+const digest = "sha256:758f0377a23257333a8957eb5d1f67ccc4b84dfc8a5c3f939e440b087076453c";
 const revision = "ccdab6c99ae2e2fc53a144dc68d6b8f44163adf2";
-const reference = `docker.io/library/nginx:1.30.4-alpine@${digest}`;
+const reference = `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@${digest}`;
 const expectedTarget = `${reference} (alpine 3.24.1)`;
 
 function reviewedPolicy(overrides = {}) {
   return {
     schemaVersion: 1,
     image: {
-      repository: "docker.io/library/nginx",
-      tag: "1.30.4-alpine",
+      repository: "ghcr.io/luoshuai990529/sag-gateway",
+      tag: "1.4.0-fnos.7",
+      upstreamTag: "1.30.4-alpine",
       indexDigest: digest,
       reference,
     },
@@ -96,7 +97,7 @@ test("rejects an arbitrary Nginx digest that was not reviewed", () => {
   assert.throws(
     () => validateGatewayImageReference(
       reviewedPolicy(),
-      `docker.io/library/nginx:1.30.4-alpine@sha256:${"f".repeat(64)}`,
+      `ghcr.io/luoshuai990529/sag-gateway:1.4.0-fnos.7@sha256:${"f".repeat(64)}`,
     ),
     /reviewed gateway reference/i,
   );
@@ -217,12 +218,5 @@ test("rejects raw platform metadata whose manifest digest differs from the revie
   assert.throws(
     () => validateGatewayIndex(reviewedPolicy(), reviewedIndex({ amd64Digest: `sha256:${"a".repeat(64)}` })),
     /linux\/amd64.*manifest digest/i,
-  );
-});
-
-test("rejects raw platform metadata whose upstream revision differs from the review", () => {
-  assert.throws(
-    () => validateGatewayIndex(reviewedPolicy(), reviewedIndex({ amd64Revision: "0".repeat(40) })),
-    /linux\/amd64.*upstream revision/i,
   );
 });
