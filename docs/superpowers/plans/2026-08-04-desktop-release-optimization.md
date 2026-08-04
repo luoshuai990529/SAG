@@ -16,6 +16,7 @@
 - Cache misses and cache-service errors retain the existing installation/build path.
 - Timing writes to `GITHUB_STEP_SUMMARY` must not mask a failed build command.
 - Do not claim improved timing before two successful GitHub Actions runs provide cold- and warm-cache data.
+- Fork E2E is permitted only for `workflow_dispatch` with `vars.DESKTOP_RELEASE_E2E == 'true'`; fork tag pushes and the upstream-only `publish` job remain blocked.
 
 ---
 
@@ -40,6 +41,11 @@ test('uses platform-scoped Electron caches without caching build outputs', () =>
   assert.doesNotMatch(workflow, /apps\\/desktop\\/node_modules/);
   assert.doesNotMatch(workflow, /apps\\/api\\/\\.venv/);
   assert.doesNotMatch(workflow, /apps\\/api\\/build\\/pyinstaller/);
+});
+
+test('allows an explicitly enabled fork E2E without allowing fork publication', () => {
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch'.*vars\.DESKTOP_RELEASE_E2E == 'true'/);
+  assert.match(workflow, /if: github\.repository == 'Zleap-AI\/SAG' && github\.event_name == 'push'/);
 });
 ```
 
@@ -120,7 +126,9 @@ Run: `git push -u fork agent/desktop-release-optimization`
 
 Expected: branch is visible in the fork.
 
-- [ ] **Step 2: Run desktop-release once with a cache-busting key**
+- [ ] **Step 2: Configure the fork E2E environment and run desktop-release once**
+
+Configure the fork's `desktop-release` Environment with `APPLE_CERTIFICATE_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`; set repository variable `DESKTOP_RELEASE_E2E=true`; then manually dispatch the workflow from `agent/desktop-release-optimization`.
 
 Expected: all CI, macOS signing/notarization, Windows installer, and artifact checks pass; retain its summaries as cold-cache evidence.
 

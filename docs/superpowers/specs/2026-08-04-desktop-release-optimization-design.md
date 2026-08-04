@@ -8,6 +8,8 @@ Reduce the GitHub Actions release critical path without weakening release safety
 
 This work applies only to `.github/workflows/desktop-release.yml` and release-observability helpers. It preserves the existing quality gate, native platform builds, macOS signing/notarization, Windows unsigned-installer assertion, update metadata, checksums, and immutable release creation. It does not reuse web or Python artifacts across operating systems, disable notarization, change installer targets, or alter release permissions.
 
+The fork E2E path is opt-in and manual: a non-upstream repository can run build jobs only when `workflow_dispatch` is used and its repository variable `DESKTOP_RELEASE_E2E` is exactly `true`. Tag pushes in forks remain ineligible. The `publish` job remains restricted to a push tag in `Zleap-AI/SAG`, so a fork E2E can never create an upstream release.
+
 ## Approach
 
 ### 1. Deterministic observability
@@ -38,7 +40,7 @@ The workflow must publish only after both platform jobs pass their existing inst
 
 ## Validation
 
-Local validation checks YAML structure, cache-key determinism, and shell/PowerShell syntax where possible. GitHub-hosted validation uses a manual workflow run from the branch, followed by two comparable runs to capture cold- and warm-cache results. Release E2E requires both platform jobs, all reusable CI jobs, artifact validation, and—on a controlled tag/release candidate—the final publish checks.
+Local validation checks YAML structure, cache-key determinism, and shell/PowerShell syntax where possible. Fork-hosted validation requires a `desktop-release` Environment containing the same five Apple signing/notarization secrets and a repository variable `DESKTOP_RELEASE_E2E=true`. It uses two manual runs from the branch to capture cold- and warm-cache results. Release E2E requires both platform jobs, all reusable CI jobs, and artifact validation; final immutable-release publication remains an upstream-only check.
 
 ## Success criteria
 
