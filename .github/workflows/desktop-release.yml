@@ -16,12 +16,16 @@ permissions:
 jobs:
   quality:
     name: Release quality gates
-    if: github.repository == 'Zleap-AI/SAG'
+    if: >-
+      github.repository == 'Zleap-AI/SAG' ||
+      (github.event_name == 'workflow_dispatch' && vars.DESKTOP_RELEASE_E2E == 'true')
     uses: ./.github/workflows/ci.yml
 
   metadata:
     name: Verify desktop build metadata
-    if: github.repository == 'Zleap-AI/SAG'
+    if: >-
+      github.repository == 'Zleap-AI/SAG' ||
+      (github.event_name == 'workflow_dispatch' && vars.DESKTOP_RELEASE_E2E == 'true')
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -32,6 +36,8 @@ jobs:
       - name: Verify release or signing-check metadata
         id: version
         shell: bash
+        env:
+          FORK_DESKTOP_RELEASE_E2E: ${{ vars.DESKTOP_RELEASE_E2E }}
         run: |
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             test "$(git cat-file -t "$GITHUB_REF_NAME")" = "tag" || {
@@ -46,10 +52,17 @@ jobs:
             node scripts/release-public.mjs --verify "$GITHUB_REF_NAME"
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            test "$GITHUB_REF" = "refs/heads/main" || {
-              echo "::error::Manual signing checks must run from public/main."
-              exit 1
-            }
+            if [[ "$GITHUB_REPOSITORY" != "Zleap-AI/SAG" ]]; then
+              test "$FORK_DESKTOP_RELEASE_E2E" = "true" || {
+                echo "::error::Fork desktop E2E requires DESKTOP_RELEASE_E2E=true."
+                exit 1
+              }
+            else
+              test "$GITHUB_REF" = "refs/heads/main" || {
+                echo "::error::Manual signing checks must run from public/main."
+                exit 1
+              }
+            fi
             version=$(node -p "require('./apps/desktop/package.json').version")
             node scripts/release-public.mjs --verify "v$version"
             echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -57,7 +70,9 @@ jobs:
 
   macos:
     name: macOS 15 · Apple Silicon · signed + notarized
-    if: github.repository == 'Zleap-AI/SAG'
+    if: >-
+      github.repository == 'Zleap-AI/SAG' ||
+      (github.event_name == 'workflow_dispatch' && vars.DESKTOP_RELEASE_E2E == 'true')
     needs: [quality, metadata]
     runs-on: macos-15
     timeout-minutes: 120
@@ -96,6 +111,14 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: apps/api/uv.lock
+      - name: Cache Electron build downloads
+        id: macos-electron-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: desktop-electron-${{ runner.os }}-${{ runner.arch }}-node-22-${{ hashFiles('apps/desktop/package-lock.json') }}
       - name: Verify native Apple Silicon toolchain
         shell: bash
         run: |
@@ -110,16 +133,32 @@ jobs:
           python -c 'import platform; raise SystemExit(0 if platform.machine() == "arm64" else "Python must be arm64")'
       - name: Install Web dependencies
         working-directory: apps/web
-        run: npm ci
+        id: macos-install-web
+        run: |
+          started_at=$(date +%s)
+          npm ci
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
       - name: Install desktop dependencies
         working-directory: apps/desktop
-        run: npm ci
+        id: macos-install-desktop
+        run: |
+          started_at=$(date +%s)
+          npm ci
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
       - name: Install frozen backend dependencies
         working-directory: apps/api
-        run: uv sync --frozen --extra desktop
+        id: macos-install-backend
+        run: |
+          started_at=$(date +%s)
+          uv sync --frozen --extra desktop
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
       - name: Prepare macOS release payload without signing credentials
         working-directory: apps/desktop
-        run: npm run prepare:release
+        id: macos-prepare-release
+        run: |
+          started_at=$(date +%s)
+          npm run prepare:release
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
       - name: Build signed and notarized macOS release
         working-directory: apps/desktop
         env:
@@ -128,7 +167,11 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run package:mac
+        id: macos-package-release
+        run: |
+          started_at=$(date +%s)
+          npm run package:mac
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
       - name: Verify macOS installer and update metadata
         shell: bash
         env:
@@ -160,10 +203,32 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+      - name: Write macOS timing summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## macOS desktop release timing"
+            echo
+            echo "Electron download cache hit: \`${{ steps.macos-electron-cache.outputs.cache-hit || 'false' }}\`"
+            echo
+            echo "| Phase | Seconds |"
+            echo "| --- | ---: |"
+            echo "| Web dependencies | ${{ steps.macos-install-web.outputs.duration_seconds || 'not completed' }} |"
+            echo "| Desktop dependencies | ${{ steps.macos-install-desktop.outputs.duration_seconds || 'not completed' }} |"
+            echo "| Backend dependencies | ${{ steps.macos-install-backend.outputs.duration_seconds || 'not completed' }} |"
+            echo "| Prepare release payload | ${{ steps.macos-prepare-release.outputs.duration_seconds || 'not completed' }} |"
+            echo "| Electron package, signing, and notarization | ${{ steps.macos-package-release.outputs.duration_seconds || 'not completed' }} |"
+            echo
+            echo "### Release asset sizes"
+            du -sh apps/desktop/release/* 2>/dev/null || true
+          } >> "$GITHUB_STEP_SUMMARY"
 
   windows:
     name: Windows 2025 · x64 · unsigned
-    if: github.repository == 'Zleap-AI/SAG'
+    if: >-
+      github.repository == 'Zleap-AI/SAG' ||
+      (github.event_name == 'workflow_dispatch' && vars.DESKTOP_RELEASE_E2E == 'true')
     needs: [quality, metadata]
     runs-on: windows-2025
     timeout-minutes: 120
@@ -186,21 +251,59 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: apps/api/uv.lock
+      - name: Cache Electron build downloads
+        id: windows-electron-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: desktop-electron-${{ runner.os }}-${{ runner.arch }}-node-22-${{ hashFiles('apps/desktop/package-lock.json') }}
       - name: Install Web dependencies
         working-directory: apps/web
-        run: npm ci
+        id: windows-install-web
+        shell: pwsh
+        run: |
+          $startedAt = [DateTimeOffset]::UtcNow
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "duration_seconds=$([int](([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds))" >> $env:GITHUB_OUTPUT
       - name: Install desktop dependencies
         working-directory: apps/desktop
-        run: npm ci
+        id: windows-install-desktop
+        shell: pwsh
+        run: |
+          $startedAt = [DateTimeOffset]::UtcNow
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "duration_seconds=$([int](([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds))" >> $env:GITHUB_OUTPUT
       - name: Install frozen backend dependencies
         working-directory: apps/api
-        run: uv sync --frozen --extra desktop
+        id: windows-install-backend
+        shell: pwsh
+        run: |
+          $startedAt = [DateTimeOffset]::UtcNow
+          uv sync --frozen --extra desktop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "duration_seconds=$([int](([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds))" >> $env:GITHUB_OUTPUT
       - name: Prepare Windows release payload
         working-directory: apps/desktop
-        run: npm run prepare:release
+        id: windows-prepare-release
+        shell: pwsh
+        run: |
+          $startedAt = [DateTimeOffset]::UtcNow
+          npm run prepare:release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "duration_seconds=$([int](([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds))" >> $env:GITHUB_OUTPUT
       - name: Build unsigned Windows release
         working-directory: apps/desktop
-        run: npm run package:win
+        id: windows-package-release
+        shell: pwsh
+        run: |
+          $startedAt = [DateTimeOffset]::UtcNow
+          npm run package:win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "duration_seconds=$([int](([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds))" >> $env:GITHUB_OUTPUT
       - name: Verify Windows installer and update metadata
         shell: pwsh
         env:
@@ -232,6 +335,27 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+      - name: Write Windows timing summary
+        if: always()
+        shell: pwsh
+        run: |
+          @"
+          ## Windows desktop release timing
+
+          Electron download cache hit: ``${{ steps.windows-electron-cache.outputs.cache-hit || 'false' }}``
+
+          | Phase | Seconds |
+          | --- | ---: |
+          | Web dependencies | ${{ steps.windows-install-web.outputs.duration_seconds || 'not completed' }} |
+          | Desktop dependencies | ${{ steps.windows-install-desktop.outputs.duration_seconds || 'not completed' }} |
+          | Backend dependencies | ${{ steps.windows-install-backend.outputs.duration_seconds || 'not completed' }} |
+          | Prepare release payload | ${{ steps.windows-prepare-release.outputs.duration_seconds || 'not completed' }} |
+          | Electron package | ${{ steps.windows-package-release.outputs.duration_seconds || 'not completed' }} |
+
+          ### Release asset sizes
+          "@ >> $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem apps/desktop/release -File -ErrorAction SilentlyContinue |
+            ForEach-Object { "{0:N1} MB  {1}" -f ($_.Length / 1MB), $_.Name } >> $env:GITHUB_STEP_SUMMARY
 
   publish:
     name: Publish immutable GitHub Release
