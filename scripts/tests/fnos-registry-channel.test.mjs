@@ -8,14 +8,14 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const script = path.join(repoRoot, "scripts/fnos-registry-channel.mjs");
 const digest = `sha256:${"a".repeat(64)}`;
 
-function run(channel, api = `ghcr.1ms.run/zleap-ai/sag-api@${digest}`, prefix) {
+function run(channel, api = `963e10c3777e15c8d0764a2747d044fa.d.1ms.run/zleap-ai/sag-api@${digest}`, prefix) {
   return spawnSync(process.execPath, [
     script,
     "validate",
     "--channel", channel,
     "--api-image", api,
-    "--web-image", `ghcr.1ms.run/zleap-ai/sag-web@${digest}`,
-    "--gateway-image", `ghcr.1ms.run/zleap-ai/sag-gateway:1.5.0-fnos.1@${digest}`,
+    "--web-image", `963e10c3777e15c8d0764a2747d044fa.d.1ms.run/zleap-ai/sag-web@${digest}`,
+    "--gateway-image", `963e10c3777e15c8d0764a2747d044fa.d.1ms.run/zleap-ai/sag-gateway:1.5.0-fnos.1@${digest}`,
     ...(prefix ? ["--cn-repository-prefix", prefix] : []),
   ], { cwd: repoRoot, encoding: "utf8" });
 }
