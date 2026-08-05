@@ -370,15 +370,15 @@ jobs:
     permissions:
       contents: read
     env:
-      API_IMAGE: ghcr.1ms.run/zleap-ai/sag-api@${{ needs.inspect-images.outputs.api_digest }}
-      WEB_IMAGE: ghcr.1ms.run/zleap-ai/sag-web@${{ needs.inspect-images.outputs.web_digest }}
+      API_IMAGE: 963e10c3777e15c8d0764a2747d044fa.d.1ms.run/zleap-ai/sag-api@${{ needs.inspect-images.outputs.api_digest }}
+      WEB_IMAGE: 963e10c3777e15c8d0764a2747d044fa.d.1ms.run/zleap-ai/sag-web@${{ needs.inspect-images.outputs.web_digest }}
       GATEWAY_IMAGE: ${{ needs.gateway-security.outputs.gateway }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.verify-release-request.outputs.revision }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.10.0
-      - name: Resolve all FPK image references through ghcr.1ms.run
+      - name: Resolve all FPK image references through 963e10c3777e15c8d0764a2747d044fa.d.1ms.run
         shell: bash
         run: |
           set -euo pipefail
@@ -427,7 +427,7 @@ jobs:
             --candidate-run-id "$CANDIDATE_RUN_ID" \
             --output release-input.json
           cat > candidate-evidence.json <<EOF
-          {"api":"ghcr.1ms.run/zleap-ai/sag-api@${API_DIGEST}","web":"ghcr.1ms.run/zleap-ai/sag-web@${WEB_DIGEST}","gateway":"${GATEWAY_IMAGE}"}
+          {"api":"963e10c3777e15c8d0764a2747d044fa.d.1ms.run/zleap-ai/sag-api@${API_DIGEST}","web":"963e10c3777e15c8d0764a2747d044fa.d.1ms.run/zleap-ai/sag-web@${WEB_DIGEST}","gateway":"${GATEWAY_IMAGE}"}
           EOF
           node scripts/release-fnos.mjs package \
             --input release-input.json \
@@ -487,7 +487,7 @@ jobs:
             --candidate-run-id "$CANDIDATE_RUN_ID" \
             --output release-input.json
           cat > candidate-evidence.json <<EOF
-          {"api":"ghcr.1ms.run/zleap-ai/sag-api@${API_DIGEST}","web":"ghcr.1ms.run/zleap-ai/sag-web@${WEB_DIGEST}","gateway":"${GATEWAY_IMAGE}"}
+          {"api":"963e10c3777e15c8d0764a2747d044fa.d.1ms.run/zleap-ai/sag-api@${API_DIGEST}","web":"963e10c3777e15c8d0764a2747d044fa.d.1ms.run/zleap-ai/sag-web@${WEB_DIGEST}","gateway":"${GATEWAY_IMAGE}"}
           EOF
           node scripts/release-fnos.mjs package \
             --input release-input.json \
@@ -508,7 +508,7 @@ jobs:
           gh release create "fnos-${CANDIDATE_VERSION}" \
             --target "$CANDIDATE_REVISION" \
             --title "SAG fnOS ${CANDIDATE_VERSION}" \
-            --notes "Verified fnOS package for ${CANDIDATE_REVISION}. Runtime images are digest-pinned and delivered through ghcr.1ms.run." \
+            --notes "Verified fnOS package for ${CANDIDATE_REVISION}. Runtime images are digest-pinned and delivered through 963e10c3777e15c8d0764a2747d044fa.d.1ms.run." \
             "release/sag-${CANDIDATE_VERSION}.fpk" \
             "release/sag-${CANDIDATE_VERSION}.fpk.sha256" \
             release/release-manifest.json
